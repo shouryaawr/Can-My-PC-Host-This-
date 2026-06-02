@@ -1,35 +1,19 @@
 import { useEffect, useMemo, useRef } from "react";
 
 function getRowTone(row) {
-  if (row.startsWith("[STAGE 1]") || row.startsWith("[STAGE 2]")) {
-    return "text-cyan-300";
+  if (row.startsWith("[Manifest]") || row.startsWith("[Hardware]")) {
+    return "border-slate-800 bg-slate-900/30 text-slate-400";
   }
-  if (row.includes("[STAGE 3]")) {
-    return "text-amber-300";
+  if (row.startsWith("[Baseline]")) {
+    return "border-blue-500/20 bg-blue-500/5 text-blue-400";
   }
-  if (row.includes("[CGROUPS]")) {
-    return "text-emerald-300";
+  if (row.startsWith("[Optimize]")) {
+    return "border-emerald-500/20 bg-emerald-500/5 text-emerald-400";
   }
-  return "text-zinc-300";
-}
-
-function formatStageThree(row) {
-  const match = row.match(/^(\[STAGE 3\]\[iter=\d+\]\s+)(.*?:\s+)(.*? -> .*?)(\s+\|\s+.*)$/);
-  if (!match) {
-    return row;
+  if (row.startsWith("[Safety]") || row.startsWith("[Warning]")) {
+    return "border-amber-500/20 bg-amber-500/5 text-amber-400";
   }
-
-  const [, prefix, service, mutation, gap] = match;
-  return (
-    <>
-      <span>{prefix}</span>
-      <span className="text-zinc-200">{service}</span>
-      <span className="rounded border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-300">
-        {mutation}
-      </span>
-      <span className="text-amber-200">{gap}</span>
-    </>
-  );
+  return "border-slate-800 bg-zinc-950 text-zinc-300";
 }
 
 export default function TraceLog({ trace = [] }) {
@@ -58,9 +42,14 @@ export default function TraceLog({ trace = [] }) {
           <div className="text-zinc-600">Awaiting optimization trace...</div>
         ) : (
           rows.map((row, index) => (
-            <div key={`${index}-${row}`} className={getRowTone(row)}>
-              <span className="select-none pr-3 text-zinc-700">{String(index + 1).padStart(2, "0")}</span>
-              <span>{row.includes("[STAGE 3]") ? formatStageThree(row) : row}</span>
+            <div
+              key={`${index}-${row}`}
+              className={`mb-1 flex gap-3 rounded border px-2 py-1.5 ${getRowTone(row)}`}
+            >
+              <span className="shrink-0 select-none text-zinc-700">
+                {String(index + 1).padStart(2, "0")}
+              </span>
+              <span className="min-w-0 break-words">{row}</span>
             </div>
           ))
         )}
