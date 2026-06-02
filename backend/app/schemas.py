@@ -43,7 +43,10 @@ class OptimizationMetrics(BaseModel):
 class AnalyzeResponse(BaseModel):
     status: Literal["FULLY_SOLVED", "DEGRADED_SAFE", "UNSOLVABLE", "INVALID_MANIFEST"]
     optimized_yaml_string: str
+    optimized_yaml: str
     metrics: OptimizationMetrics
     services: List[ServiceAnalysisResult]
+    topology: List[ServiceAnalysisResult]
     warnings: List[str]
     execution_trace: List[str]
+    trace_log: List[str]

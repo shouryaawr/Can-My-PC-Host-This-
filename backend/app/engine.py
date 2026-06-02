@@ -1,4 +1,5 @@
 import json
+import re
 from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
@@ -161,7 +162,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
                 continue
 
             if c_gap > 0:
-                variable_name = _cpu_variable_name(service.tier)
+                variable_name = _primary_variable_name(service.tier)
                 if not variable_name:
                     continue
 
@@ -271,9 +272,12 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
     elif final_m_gap > 0 or final_c_gap > 0:
         status = "UNSOLVABLE"
 
+    optimized_yaml = _dump_yaml(yaml, document)
+
     return AnalyzeResponse(
         status=status,
-        optimized_yaml_string=_dump_yaml(yaml, document),
+        optimized_yaml_string=optimized_yaml,
+        optimized_yaml=optimized_yaml,
         metrics=OptimizationMetrics(
             initial_predicted_ram_mb=initial_predicted_ram,
             final_predicted_ram_mb=final_predicted_ram,
@@ -292,8 +296,21 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             )
             for service in contexts
         ],
+        topology=[
+            ServiceAnalysisResult(
+                name=service.name,
+                tier=service.tier,
+                replicas=service.replicas,
+                initial_ram_mb=service.initial_ram_mb,
+                final_ram_mb=service.final_ram_mb,
+                variables_mutated=service.variables_mutated,
+                cgroups_injected=service.cgroups_injected,
+            )
+            for service in contexts
+        ],
         warnings=warnings,
         execution_trace=trace,
+        trace_log=trace,
     )
 
 
@@ -331,12 +348,23 @@ def _classify_service(service: Any, profiles: dict[str, Any]) -> str:
         if image_fragment in image:
             return tier
 
-    service_text = " ".join(strings)
-    if any(token in service_text for token in ("worker", "celery", "beat", "queue")):
-        return "backend_low_priority"
+    # Ports = highest priority (after explicit tier / image match)
     if isinstance(service, dict) and service.get("ports"):
         return "backend_hybrid"
-    return "backend_low_priority"
+
+    # Keyword detection = lowest priority
+    # Use regex tokenization so compound names like "celery-worker", "workerProcess",
+    # "WORKERS", and "queue_handler" are correctly decomposed into atomic words.
+    service_text = " ".join(
+        str(v) for v in service.values()
+    ) if isinstance(service, dict) else str(service)
+
+    tokens = set(re.findall(r"[A-Za-z]+", service_text.lower()))
+
+    if any(k in t for t in tokens for k in {"worker", "celery", "beat", "queue"}):
+        return "backend_low_priority"
+
+    return "backend"
 
 
 def _walk_strings(value: Any) -> list[str]:
@@ -365,14 +393,6 @@ def _inject_missing_defaults(contexts: list[ServiceContext], profiles: dict[str,
 
 
 def _primary_variable_name(tier: str) -> str | None:
-    return {
-        "database": "max_connections",
-        "backend_hybrid": "WORKERS",
-        "cache": "maxmemory",
-    }.get(tier)
-
-
-def _cpu_variable_name(tier: str) -> str | None:
     return {
         "database": "max_connections",
         "backend_hybrid": "WORKERS",
@@ -442,7 +462,9 @@ def _service_ram(service: ServiceContext, profiles: dict[str, Any]) -> float:
     if service.tier == "backend_hybrid":
         workers = _read_env_number(service.node, "WORKERS")
         workers = workers if workers is not None else 4
-        return (64.0 + (workers * 32.0)) * replicas
+        web_concurrency = _read_env_number(service.node, "WEB_CONCURRENCY")
+        web_concurrency = web_concurrency if web_concurrency is not None else 4
+        return (64.0 + (workers * 32.0) + (web_concurrency * 48.0)) * replicas
     if service.tier == "cache":
         maxmemory = _read_env_number(service.node, "maxmemory")
         maxmemory = maxmemory if maxmemory is not None else 256
@@ -453,7 +475,7 @@ def _service_ram(service: ServiceContext, profiles: dict[str, Any]) -> float:
 def _service_cpu(service: ServiceContext, profiles: dict[str, Any]) -> float:
     tier_config = profiles["tiers"][service.tier]
     base_cpu = tier_config["base_cpu"] * service.replicas
-    variable_name = _cpu_variable_name(service.tier)
+    variable_name = _primary_variable_name(service.tier)
     if not variable_name:
         return base_cpu
 
@@ -462,7 +484,14 @@ def _service_cpu(service: ServiceContext, profiles: dict[str, Any]) -> float:
     if not default_value or current_value is None:
         return base_cpu
 
-    return base_cpu * (current_value / default_value)
+    cpu_scale = current_value / default_value
+    if service.tier == "backend_hybrid":
+        web_default = tier_config["default_max_variables"].get("WEB_CONCURRENCY")
+        web_value = _read_env_number(service.node, "WEB_CONCURRENCY")
+        if web_default and web_value is not None:
+            cpu_scale = (cpu_scale + (web_value / web_default)) / 2
+
+    return base_cpu * cpu_scale
 
 
 def _at_floor(service: ServiceContext, profiles: dict[str, Any]) -> bool:
@@ -538,6 +567,7 @@ def _response(
     return AnalyzeResponse(
         status=status,
         optimized_yaml_string=yaml_string,
+        optimized_yaml=yaml_string,
         metrics=OptimizationMetrics(
             initial_predicted_ram_mb=sum(service.initial_ram_mb for service in service_contexts),
             final_predicted_ram_mb=sum(service.final_ram_mb for service in service_contexts),
@@ -556,6 +586,19 @@ def _response(
             )
             for service in service_contexts
         ],
+        topology=[
+            ServiceAnalysisResult(
+                name=service.name,
+                tier=service.tier,
+                replicas=service.replicas,
+                initial_ram_mb=service.initial_ram_mb,
+                final_ram_mb=service.final_ram_mb,
+                variables_mutated=service.variables_mutated,
+                cgroups_injected=service.cgroups_injected,
+            )
+            for service in service_contexts
+        ],
         warnings=warnings,
         execution_trace=trace,
+        trace_log=trace,
     )
