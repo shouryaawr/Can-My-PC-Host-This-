@@ -1,0 +1,57 @@
+{
+  "host_profiles": {
+    "silent_running": { "cpu_threshold_multiplier": 0.80, "ram_safety_buffer": 0.70 },
+    "max_performance": { "cpu_threshold_multiplier": 1.50, "ram_safety_buffer": 0.95 },
+    "background_dev": { "cpu_threshold_multiplier": 1.00, "ram_safety_buffer": 0.50 }
+  },
+  "tiers": {
+    "database": { 
+      "base_ram_mb": 128.00, 
+      "base_cpu": 0.25, 
+      "ram_scaling_factor": 15.00,
+      "default_max_variables": { "max_connections": 100 }
+    },
+    "backend_hybrid": { 
+      "base_ram_mb": 64.00, 
+      "base_cpu": 0.20, 
+      "ram_scaling_factor": 32.00,
+      "default_max_variables": { "WORKERS": 4, "WEB_CONCURRENCY": 4 }
+    },
+    "backend_low_priority": { 
+      "base_ram_mb": 64.00, 
+      "base_cpu": 0.10, 
+      "ram_scaling_factor": 0.00,
+      "default_max_variables": {}
+    },
+    "cache": { 
+      "base_ram_mb": 16.00, 
+      "base_cpu": 0.05, 
+      "ram_scaling_factor": 1.00,
+      "default_max_variables": { "maxmemory": 256 }
+    },
+    "frontend": { 
+      "base_ram_mb": 16.00, 
+      "base_cpu": 0.05, 
+      "ram_scaling_factor": 0.00,
+      "default_max_variables": {}
+    }
+  },
+  "floors": {
+    "database": { "ram_mb": 128.00, "variables": { "max_connections": 5 } },
+    "backend_hybrid": { "ram_mb": 64.00, "variables": { "WORKERS": 1, "WEB_CONCURRENCY": 1 } },
+    "backend_low_priority": { "ram_mb": 32.00, "variables": {} },
+    "cache": { "ram_mb": 16.00, "variables": { "maxmemory": 16 } },
+    "frontend": { "ram_mb": 8.00, "variables": {} }
+  },
+  "image_lookup_table": {
+    "postgres": "database", "mysql": "database", "mariadb": "database", "mongo": "database",
+    "redis": "cache", "memcached": "cache",
+    "nginx": "frontend", "caddy": "frontend", "httpd": "frontend",
+    "minio": "backend_hybrid", "keycloak": "backend_hybrid", 
+    "grafana": "backend_hybrid", "prometheus": "backend_hybrid",
+    "elasticsearch": "database", "influxdb": "database", 
+    "rabbitmq": "database", "kafka": "database",
+    "traefik": "frontend", "haproxy": "frontend",
+    "celery": "backend_low_priority", "worker": "backend_low_priority"
+  }
+}
