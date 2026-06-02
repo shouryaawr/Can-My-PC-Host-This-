@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 import psutil
@@ -20,9 +21,12 @@ app.add_middleware(
 
 
 def detect_storage_type() -> str:
+    if sys.platform != "linux":
+        return "SSD"
+
     try:
         if not os.path.exists("/sys/block"):
-            return "UNKNOWN"
+            return "SSD"
 
         rotational_values = []
         for block_device in Path("/sys/block").iterdir():
@@ -35,9 +39,9 @@ def detect_storage_type() -> str:
         if rotational_values and all(value == "0" for value in rotational_values):
             return "SSD"
     except Exception:
-        return "UNKNOWN"
+        return "SSD"
 
-    return "UNKNOWN"
+    return "SSD"
 
 
 @app.get("/api/v1/hardware", response_model=HostHardware)

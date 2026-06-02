@@ -1,4 +1,3 @@
-import graphlib
 import json
 from dataclasses import dataclass, field
 from io import StringIO
@@ -18,6 +17,8 @@ from .schemas import (
 
 
 MAX_ITERATIONS = 50
+
+
 @dataclass
 class ServiceContext:
     name: str
@@ -43,7 +44,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
         return _response(
             status="INVALID_MANIFEST",
             yaml_string=payload.yaml_string,
-            trace=["[STAGE 0] Invalid host hardware payload."],
+            trace=["[Validate] Host hardware payload is not usable."],
             warnings=warnings,
         )
 
@@ -57,7 +58,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
         return _response(
             status="INVALID_MANIFEST",
             yaml_string=payload.yaml_string,
-            trace=[f"[STAGE 1] YAML parse error: {exc}"],
+            trace=[f"[Manifest] Could not parse YAML: {exc}"],
             warnings=warnings,
         )
 
@@ -66,25 +67,11 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
         return _response(
             status="INVALID_MANIFEST",
             yaml_string=payload.yaml_string,
-            trace=["[STAGE 1] No services found in manifest."],
+            trace=["[Manifest] No services found in manifest."],
             warnings=warnings,
         )
 
-    dependencies = {name: _extract_depends_on(service) for name, service in services.items()}
-    service_order = list(services.keys())
-    if len(services) > 1:
-        sorter = graphlib.TopologicalSorter()
-        for name, deps in dependencies.items():
-            sorter.add(name, *(dep for dep in deps if dep in services))
-        try:
-            service_order = list(reversed(tuple(sorter.static_order())))
-        except graphlib.CycleError as exc:
-            return _response(
-                status="INVALID_MANIFEST",
-                yaml_string=payload.yaml_string,
-                trace=[f"[STAGE 1] Dependency cycle detected: {exc}"],
-                warnings=warnings,
-            )
+    service_order = sorted(services)
 
     contexts = [
         ServiceContext(
@@ -95,7 +82,10 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
         )
         for name in service_order
     ]
-    trace.append(f"[STAGE 1] Evaluation order: {', '.join(service.name for service in contexts)}")
+    trace.append(
+        "[Manifest] Evaluating services alphabetically: "
+        f"{', '.join(service.name for service in contexts)}."
+    )
 
     floor_total = sum(
         profiles["floors"][service.tier]["ram_mb"] * service.replicas for service in contexts
@@ -106,7 +96,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             yaml_string=_dump_yaml(yaml, document),
             trace=trace
             + [
-                "[STAGE 1] Rock-bottom memory floors exceed available host RAM: "
+                "[Capacity] Minimum service memory floors exceed host RAM: "
                 f"{round(floor_total, 1)}MB > {round(payload.host_hardware.free_ram_mb, 1)}MB."
             ],
             warnings=warnings,
@@ -117,25 +107,28 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
     effective_free_ram = payload.host_hardware.free_ram_mb * profile["ram_safety_buffer"]
     cpu_budget = payload.host_hardware.cpu_cores * profile["cpu_threshold_multiplier"]
 
+    # Calculate initial baseline footprints based on service tiers
     _inject_missing_defaults(contexts, profiles)
-    _recalculate(contexts, profiles, apply_hdd_penalty=False)
+    _recalculate(contexts, profiles)
     initial_predicted_ram = sum(service.current_ram_mb for service in contexts)
 
     if initial_predicted_ram > 0.80 * effective_free_ram:
         for service in contexts:
             service.current_ram_mb *= 0.90
-        trace.append("[STAGE 2] RAM pressure safeguard applied: flat 10% footprint deduction.")
+        trace.append("[Optimize] Trimmed baseline service footprints by 10% because RAM is tight.")
 
-    hdd_database_penalty = False
     if payload.host_hardware.storage_type == "HDD":
+        hdd_database_penalty = False
         for service in contexts:
             if service.tier == "database" and service.current_ram_mb > 256:
                 service.current_ram_mb *= 1.25
                 hdd_database_penalty = True
         if hdd_database_penalty:
-            trace.append("[STAGE 2] HDD database penalty applied: +25% database footprint.")
+            trace.append("[Hardware] Applied HDD database cushion for slower host storage.")
         else:
             warnings.append("HDD storage detected, but no database layer is running.")
+    else:
+        trace.append("[Hardware] Applied standard SSD profile for host storage.")
 
     for service in contexts:
         service.initial_ram_mb = service.current_ram_mb
@@ -147,18 +140,19 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
     m_gap = m_predicted - effective_free_ram
     c_gap = c_predicted - cpu_budget
     trace.append(
-        "[STAGE 2] Initial footprint: "
-        f"M_predicted={round(m_predicted, 1)}MB, C_predicted={round(c_predicted, 2)}, "
-        f"M_gap={round(m_gap, 1)}MB, C_gap={round(c_gap, 2)}."
+        "[Baseline] Services need "
+        f"{round(m_predicted, 1)}MB RAM and {round(c_predicted, 2)} CPU; "
+        f"host gaps are {round(m_gap, 1)}MB RAM and {round(c_gap, 2)} CPU."
     )
 
+    # Check host limits and scale down services if memory is tight
     cgroups_used = False
     current_iteration = 0
-    while m_gap > 0 and current_iteration < MAX_ITERATIONS:
+    while (m_gap > 0 or c_gap > 0) and current_iteration < MAX_ITERATIONS:
         current_iteration += 1
         changes = 0
 
-        for service in _optimization_queue(contexts):
+        for service in contexts:
             if _at_floor(service, profiles) or service.tier == "backend_low_priority":
                 continue
 
@@ -166,12 +160,57 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             if not variable_name:
                 continue
 
+            if c_gap > 0:
+                variable_name = _cpu_variable_name(service.tier)
+                if not variable_name:
+                    continue
+
+                current_value = _read_env_number(service.node, variable_name)
+                floor_value = profiles["floors"][service.tier]["variables"].get(variable_name)
+                if current_value is None or floor_value is None or current_value <= floor_value:
+                    continue
+
+                next_value = max(floor_value, int(current_value) - 1)
+                if next_value == current_value:
+                    continue
+
+                _write_env_value(service.node, variable_name, next_value)
+                _record_mutation(service, variable_name, current_value, next_value)
+                service.current_ram_mb = _service_ram(service, profiles)
+                service.final_ram_mb = service.current_ram_mb
+                service.cpu = _service_cpu(service, profiles)
+                m_predicted = sum(item.current_ram_mb for item in contexts)
+                c_predicted = sum(item.cpu for item in contexts)
+                m_gap = m_predicted - effective_free_ram
+                c_gap = c_predicted - cpu_budget
+                changes += 1
+                if service.tier == "backend_hybrid":
+                    trace.append(
+                        "[Optimize] Throttled internal worker threads for "
+                        f"service:{service.name} to reduce host CPU core saturation."
+                    )
+                else:
+                    trace.append(
+                        f"[Optimize] Throttled {variable_name} for "
+                        f"service:{service.name} to reduce host CPU core saturation."
+                    )
+
+                if m_gap <= 0 and c_gap <= 0:
+                    break
+                continue
+
             current_value = _read_env_number(service.node, variable_name)
             floor_value = profiles["floors"][service.tier]["variables"].get(variable_name)
             if current_value is None or floor_value is None or current_value <= floor_value:
-                continue
+                if service.tier != "backend_hybrid" or variable_name != "WORKERS":
+                    continue
 
-            previous_gap = m_gap
+                variable_name = "WEB_CONCURRENCY"
+                current_value = _read_env_number(service.node, variable_name)
+                floor_value = profiles["floors"][service.tier]["variables"].get(variable_name)
+                if current_value is None or floor_value is None or current_value <= floor_value:
+                    continue
+
             next_value = max(floor_value, int(current_value * 0.5))
             if next_value == current_value:
                 next_value = floor_value
@@ -181,41 +220,55 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             old_ram = service.current_ram_mb
             service.current_ram_mb = _service_ram(service, profiles)
             service.final_ram_mb = service.current_ram_mb
+            service.cpu = _service_cpu(service, profiles)
             m_predicted = sum(item.current_ram_mb for item in contexts)
+            c_predicted = sum(item.cpu for item in contexts)
             m_gap = m_predicted - effective_free_ram
+            c_gap = c_predicted - cpu_budget
             changes += 1
-            trace.append(
-                f"[STAGE 3][iter={current_iteration}] {service.name}: "
-                f"{variable_name} {round(current_value, 1)} -> {round(next_value, 1)} | "
-                f"M_gap: {round(previous_gap, 1)}MB -> {round(m_gap, 1)}MB"
-            )
+            saved_ram = max(0.0, old_ram - service.current_ram_mb)
+            if variable_name == "WEB_CONCURRENCY":
+                trace.append(
+                    "[Optimize] Reduced WEB_CONCURRENCY for "
+                    f"service:{service.name} to save memory as workers hit their minimum floor."
+                )
+            else:
+                trace.append(
+                    f"[Optimize] Reduced {service.name} {variable_name} from "
+                    f"{round(current_value, 1)} to {round(next_value, 1)} to save "
+                    f"{round(saved_ram, 1)}MB due to host memory limits."
+                )
 
             if old_ram == service.current_ram_mb:
                 continue
-            if m_gap <= 0:
+            if m_gap <= 0 and c_gap <= 0:
                 break
 
         if changes == 0:
-            trace.append(f"[STAGE 3][iter={current_iteration}] No variable alterations available.")
+            trace.append("[Optimize] No more service knobs can be lowered safely.")
             break
 
-    if m_gap > 0:
+    # Fallback to safety boundaries if we are still over capacity
+    if m_gap > 0 or c_gap > 0:
         cgroups_used = _inject_cgroups(contexts, profiles, c_gap, effective_free_ram)
         if cgroups_used:
             m_predicted = sum(service.final_ram_mb for service in contexts)
+            c_predicted = sum(service.cpu for service in contexts)
             m_gap = m_predicted - effective_free_ram
+            c_gap = c_predicted - cpu_budget
             trace.append(
-                "[CGROUPS] Hard resource fences injected; "
-                f"final M_gap={round(m_gap, 1)}MB."
+                "[Safety] Added hard resource limits because tuning alone could not fit the host; "
+                f"remaining RAM gap is {round(m_gap, 1)}MB."
             )
 
     final_predicted_ram = sum(service.final_ram_mb for service in contexts)
     final_cpu = sum(service.cpu for service in contexts)
     final_m_gap = final_predicted_ram - effective_free_ram
+    final_c_gap = final_cpu - cpu_budget
     status = "FULLY_SOLVED"
-    if cgroups_used and final_m_gap <= 0:
+    if cgroups_used and final_m_gap <= 0 and final_c_gap <= 0:
         status = "DEGRADED_SAFE"
-    elif final_m_gap > 0:
+    elif final_m_gap > 0 or final_c_gap > 0:
         status = "UNSOLVABLE"
 
     return AnalyzeResponse(
@@ -255,15 +308,6 @@ def _extract_services(document: Any) -> dict[str, Any]:
     if isinstance(document, dict):
         return document
     return {}
-
-
-def _extract_depends_on(service: Any) -> list[str]:
-    depends_on = service.get("depends_on", []) if isinstance(service, dict) else []
-    if isinstance(depends_on, list):
-        return [str(item) for item in depends_on]
-    if isinstance(depends_on, dict):
-        return [str(item) for item in depends_on.keys()]
-    return []
 
 
 def _extract_replicas(service: Any) -> int:
@@ -328,6 +372,14 @@ def _primary_variable_name(tier: str) -> str | None:
     }.get(tier)
 
 
+def _cpu_variable_name(tier: str) -> str | None:
+    return {
+        "database": "max_connections",
+        "backend_hybrid": "WORKERS",
+        "cache": "maxmemory",
+    }.get(tier)
+
+
 def _read_env_number(service: Any, key: str) -> float | None:
     environment = _ensure_environment(service)
     if isinstance(environment, dict) and key in environment:
@@ -373,9 +425,7 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
-def _recalculate(
-    contexts: list[ServiceContext], profiles: dict[str, Any], apply_hdd_penalty: bool
-) -> None:
+def _recalculate(contexts: list[ServiceContext], profiles: dict[str, Any]) -> None:
     for service in contexts:
         service.current_ram_mb = _service_ram(service, profiles)
         service.final_ram_mb = service.current_ram_mb
@@ -401,26 +451,18 @@ def _service_ram(service: ServiceContext, profiles: dict[str, Any]) -> float:
 
 
 def _service_cpu(service: ServiceContext, profiles: dict[str, Any]) -> float:
-    return profiles["tiers"][service.tier]["base_cpu"] * service.replicas
+    tier_config = profiles["tiers"][service.tier]
+    base_cpu = tier_config["base_cpu"] * service.replicas
+    variable_name = _cpu_variable_name(service.tier)
+    if not variable_name:
+        return base_cpu
 
+    default_value = tier_config["default_max_variables"].get(variable_name)
+    current_value = _read_env_number(service.node, variable_name)
+    if not default_value or current_value is None:
+        return base_cpu
 
-def _optimization_queue(contexts: list[ServiceContext]) -> list[ServiceContext]:
-    total = sum(service.current_ram_mb for service in contexts)
-    dominant_databases = {
-        service.name
-        for service in contexts
-        if service.tier == "database" and total > 0 and service.current_ram_mb > total * 0.50
-    }
-    order_index = {service.name: index for index, service in enumerate(contexts)}
-    return sorted(
-        contexts,
-        key=lambda service: (
-            service.name not in dominant_databases,
-            -service.initial_ram_mb,
-            service.name,
-            order_index[service.name],
-        ),
-    )
+    return base_cpu * (current_value / default_value)
 
 
 def _at_floor(service: ServiceContext, profiles: dict[str, Any]) -> bool:
