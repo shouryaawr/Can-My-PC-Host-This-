@@ -9,6 +9,7 @@ import {
   Github,
   HardDrive,
   Loader2,
+  Maximize2,
   Network,
   Play,
   ScrollText,
@@ -209,7 +210,6 @@ function ConfigurationCards({ hardwareData, setHardwareData, activeProfile, setA
 /* ─────────────────────── Import / Load Modal ────────────────────── */
 
 function ImportModal({ onClose, onLoad }) {
-  const [pasteValue, setPasteValue] = useState("");
   const fileInputRef = useRef(null);
 
   function handleFile(event) {
@@ -221,13 +221,6 @@ function ImportModal({ onClose, onLoad }) {
       onClose();
     };
     reader.readAsText(file);
-  }
-
-  function handlePasteConfirm() {
-    if (pasteValue.trim()) {
-      onLoad(pasteValue);
-      onClose();
-    }
   }
 
   // Close on Escape
@@ -284,33 +277,6 @@ function ImportModal({ onClose, onLoad }) {
             onChange={handleFile}
           />
         </div>
-
-        {/* Divider */}
-        <div className="my-4 flex items-center gap-3">
-          <div className="h-px flex-1 bg-slate-800" />
-          <span className="text-xs text-zinc-600">or paste directly</span>
-          <div className="h-px flex-1 bg-slate-800" />
-        </div>
-
-        {/* Paste Area */}
-        <textarea
-          className="h-48 w-full rounded-lg border border-slate-800 bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-200 outline-none transition focus:border-emerald-400/60"
-          placeholder="Paste your docker-compose YAML here…"
-          spellCheck="false"
-          value={pasteValue}
-          onChange={(e) => setPasteValue(e.target.value)}
-        />
-
-        {/* Confirm */}
-        <button
-          type="button"
-          onClick={handlePasteConfirm}
-          disabled={!pasteValue.trim()}
-          className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
-        >
-          <Upload className="h-4 w-4" aria-hidden="true" />
-          Load Pasted YAML
-        </button>
       </div>
     </div>
   );
@@ -330,7 +296,8 @@ export default function App() {
   const [analysisFailed, setAnalysisFailed] = useState(false);
   const [githubUrl, setGithubUrl] = useState("");
   const [fetchError, setFetchError] = useState(null);
-  const [inputMode, setInputMode] = useState("paste");
+  const [inputMode, setInputMode] = useState("github");
+  const [isEditorExpanded, setIsEditorExpanded] = useState(false);
 
   /* ── load live hardware on mount ── */
   useEffect(() => {
@@ -475,6 +442,36 @@ export default function App() {
         <ImportModal onClose={() => setShowImport(false)} onLoad={handleLoadYaml} />
       )}
 
+      {isEditorExpanded && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <section className="flex h-[80vh] w-11/12 max-w-5xl flex-col overflow-hidden rounded-xl border border-surface-border bg-surface shadow-2xl">
+            <header className="flex items-center justify-between gap-3 border-b border-surface-border px-5 py-4">
+              <div className="flex items-center gap-2">
+                <FileCode2 className="h-4 w-4 text-accent" aria-hidden="true" />
+                <h2 className="text-base font-semibold text-zinc-100">Full Manifest Editor</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditorExpanded(false)}
+                className="inline-flex items-center gap-2 rounded-md border border-surface-border bg-surface-raised px-3 py-2 text-sm font-medium text-zinc-300 transition hover:border-accent/50 hover:text-zinc-100"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+                Close & Save
+              </button>
+            </header>
+            <div className="min-h-0 flex-1 p-4">
+              <textarea
+                className="h-full w-full resize-none overflow-auto rounded-lg border border-surface-border bg-zinc-950 p-4 font-mono text-xs leading-5 text-zinc-200 outline-none transition placeholder:text-zinc-600 focus:border-accent focus:ring-1 focus:ring-accent/30"
+                placeholder="Paste your docker-compose.yml here..."
+                spellCheck="false"
+                value={yamlString}
+                onChange={(event) => setYamlString(event.target.value)}
+              />
+            </div>
+          </section>
+        </div>
+      )}
+
       <main className="app-shell-bg min-h-screen bg-zinc-950 px-4 py-6 text-zinc-100 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-7xl">
 
@@ -596,14 +593,26 @@ export default function App() {
                 ) : null}
 
                 {inputMode === "paste" ? (
-                  <textarea
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditorExpanded(true)}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-surface-border bg-surface px-2.5 py-1.5 text-xs font-medium text-zinc-400 transition hover:border-accent/50 hover:text-zinc-100"
+                      >
+                        <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        Expand Editor
+                      </button>
+                    </div>
+                    <textarea
                   id="yaml-editor"
-                  className="h-[28rem] w-full rounded-lg border border-slate-800 bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-200 outline-none transition focus:border-emerald-400/60"
+                  className="h-32 w-full resize-none overflow-auto rounded-lg border border-slate-800 bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-200 outline-none transition focus:border-emerald-400/60"
                   placeholder={`Paste your docker-compose.yml here, or use Import / Load YAML above…`}
                   spellCheck="false"
                   value={yamlString}
                   onChange={(event) => setYamlString(event.target.value)}
-                  />
+                    />
+                  </div>
                 ) : null}
 
                 {/* Contextual helper — only on failure */}
