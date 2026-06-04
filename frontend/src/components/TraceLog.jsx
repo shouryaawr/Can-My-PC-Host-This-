@@ -28,11 +28,9 @@ export default function TraceLog({ trace = [] }) {
 
   return (
     <section className="flex min-h-0 flex-col overflow-hidden rounded border border-slate-800 bg-zinc-950 shadow-lg shadow-black/20">
-      <div className="flex items-center gap-2 border-b border-slate-800 px-3 py-2">
-        <span className="h-2.5 w-2.5 rounded-full bg-red-400" />
-        <span className="h-2.5 w-2.5 rounded-full bg-amber-300" />
-        <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
-        <span className="ml-2 font-mono text-xs text-zinc-500">engine-trace</span>
+      <div className="flex w-full flex-row items-center justify-between border-b border-slate-800 px-3 py-2">
+        <span className="font-mono text-xs text-zinc-500">engine-trace / runtime</span>
+        <span className="text-xs text-slate-500">{rows.length} events</span>
       </div>
       <div
         ref={scrollRef}

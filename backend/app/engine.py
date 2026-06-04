@@ -69,6 +69,16 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             warnings=warnings,
         )
 
+    # Sanitize RAM inputs: absorb any floating-point micro-drift from the
+    # frontend's unit-serialization layer before any budget math runs.
+    total_ram_mb = int(round(payload.host_hardware.total_ram_mb))
+    free_ram_mb  = int(round(payload.host_hardware.free_ram_mb))
+
+    # Re-assign back so all downstream reads on payload.host_hardware stay
+    # consistent without touching the Pydantic model's field types.
+    payload.host_hardware.total_ram_mb = total_ram_mb
+    payload.host_hardware.free_ram_mb  = free_ram_mb
+
     profiles = _load_safe_profiles(trace)
     yaml = YAML(typ="rt")
     yaml.preserve_quotes = True

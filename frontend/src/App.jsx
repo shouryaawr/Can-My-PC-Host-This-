@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Cpu,
-  FileCode2,
+  FileCode,
   FileUp,
   Gauge,
   GitCompareArrows,
@@ -11,7 +11,7 @@ import {
   Loader2,
   Maximize2,
   Network,
-  Play,
+  RotateCcw,
   ScrollText,
   Server,
   Upload,
@@ -55,7 +55,7 @@ const PROFILE_OPTIONS = [
 const TAB_OPTIONS = [
   { key: "diff", label: "Diff Viewer", icon: GitCompareArrows },
   { key: "topology", label: "Node Topology", icon: Network },
-  { key: "trace", label: "Rule Trace Logs", icon: ScrollText },
+  { key: "trace", label: "Rule Trace", icon: ScrollText },
 ];
 
 const STATUS_CLASSES = {
@@ -63,6 +63,13 @@ const STATUS_CLASSES = {
   DEGRADED_SAFE: "border-amber-400/30 bg-amber-400/10 text-amber-300",
   UNSOLVABLE: "border-rose-400/30 bg-rose-400/10 text-rose-300",
   INVALID_MANIFEST: "border-rose-400/30 bg-rose-400/10 text-rose-300",
+};
+
+const STATUS_LABELS = {
+  FULLY_SOLVED: "Optimal Allocation",
+  DEGRADED_SAFE: "Degraded — Safe",
+  UNSOLVABLE: "Unsolvable",
+  INVALID_MANIFEST: "Invalid Manifest",
 };
 
 const DEFAULT_HARDWARE = {
@@ -76,7 +83,21 @@ const DEFAULT_HARDWARE = {
 
 function formatMetric(value, suffix = "MB") {
   const number = Number(value || 0);
-  return `${Math.round(number).toLocaleString()}${suffix}`;
+  return `${Math.round(number).toLocaleString()} ${suffix}`;
+}
+
+function formatRamInputValue(value, unit) {
+  const number = Number(value || 0);
+  if (unit === "GB") {
+    return Number((number / 1000).toFixed(1));
+  }
+  return Math.round(number);
+}
+
+function parseRamInputValue(value, unit) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.round(unit === "GB" ? number * 1000 : number);
 }
 
 /* ─────────────────────────── small components ──────────────────── */
@@ -121,26 +142,76 @@ function LoadingDisplay() {
   );
 }
 
-function HostHardwareCard({ hardwareData, setHardwareData }) {
+function HostHardwareCard({
+  hardwareData,
+  setHardwareData,
+  hardwareSource,
+  setHardwareSource,
+  ramUnit,
+  setRamUnit,
+  onRedetectHardware,
+}) {
+  function updateHardwareField(field, value) {
+    setHardwareSource("custom");
+    setHardwareData((current) => ({ ...current, [field]: value }));
+  }
+
   return (
     <section className="rounded-xl border border-slate-800 bg-zinc-900/70 p-4">
-      <div className="mb-3 flex items-center gap-2">
-        <Cpu className="h-4 w-4 text-emerald-300" aria-hidden="true" />
-        <h2 className="text-sm font-semibold text-zinc-100">Host Hardware</h2>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Cpu className="h-5 w-5 text-zinc-400" strokeWidth={1.5} aria-hidden="true" />
+          <h2 className="text-sm font-semibold text-zinc-100">Host Hardware</h2>
+          <span
+            className={`rounded-full px-2 py-0.5 text-[0.68rem] font-medium ${
+              hardwareSource === "system"
+                ? "bg-emerald-400/10 text-emerald-300"
+                : "bg-amber-400/10 text-amber-300"
+            }`}
+          >
+            {hardwareSource === "system" ? "System" : "Custom"}
+          </span>
+          <div className="inline-flex rounded-md border border-slate-800 bg-zinc-950/80 p-0.5">
+            {["MB", "GB"].map((unit) => (
+              <button
+                key={unit}
+                type="button"
+                onClick={() => setRamUnit(unit)}
+                className={`rounded px-1.5 py-0.5 text-[0.68rem] font-medium transition ${
+                  ramUnit === unit
+                    ? "bg-slate-700 text-zinc-100"
+                    : "text-zinc-500 hover:text-zinc-200"
+                }`}
+              >
+                {unit}
+              </button>
+            ))}
+          </div>
+        </div>
+        <button
+          type="button"
+          title="Re-detect system hardware"
+          onClick={onRedetectHardware}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-surface-border bg-surface/70 text-zinc-500 transition hover:border-emerald-400/40 hover:bg-surface-raised hover:text-emerald-300"
+        >
+          <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+        </button>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
         <NumberField
-          label="Total RAM MB"
-          value={hardwareData.total_ram_mb}
+          label={`Total RAM ${ramUnit}`}
+          step={ramUnit === "GB" ? 0.1 : 1}
+          value={formatRamInputValue(hardwareData.total_ram_mb, ramUnit)}
           onChange={(value) =>
-            setHardwareData((current) => ({ ...current, total_ram_mb: value }))
+            updateHardwareField("total_ram_mb", parseRamInputValue(value, ramUnit))
           }
         />
         <NumberField
-          label="Free RAM MB"
-          value={hardwareData.free_ram_mb}
+          label={`Free RAM ${ramUnit}`}
+          step={ramUnit === "GB" ? 0.1 : 1}
+          value={formatRamInputValue(hardwareData.free_ram_mb, ramUnit)}
           onChange={(value) =>
-            setHardwareData((current) => ({ ...current, free_ram_mb: value }))
+            updateHardwareField("free_ram_mb", parseRamInputValue(value, ramUnit))
           }
         />
         <NumberField
@@ -148,7 +219,7 @@ function HostHardwareCard({ hardwareData, setHardwareData }) {
           min={1}
           value={hardwareData.cpu_cores}
           onChange={(value) =>
-            setHardwareData((current) => ({ ...current, cpu_cores: value }))
+            updateHardwareField("cpu_cores", value)
           }
         />
         <label className="block">
@@ -158,12 +229,7 @@ function HostHardwareCard({ hardwareData, setHardwareData }) {
           <select
             className="mt-1 w-full rounded-md border border-slate-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-emerald-400/60"
             value={hardwareData.storage_type}
-            onChange={(event) =>
-              setHardwareData((current) => ({
-                ...current,
-                storage_type: event.target.value,
-              }))
-            }
+            onChange={(event) => updateHardwareField("storage_type", event.target.value)}
           >
             <option value="SSD">SSD</option>
             <option value="HDD">HDD</option>
@@ -198,10 +264,28 @@ function OperationalProfileCard({ activeProfile, setActiveProfile }) {
   );
 }
 
-function ConfigurationCards({ hardwareData, setHardwareData, activeProfile, setActiveProfile }) {
+function ConfigurationCards({
+  hardwareData,
+  setHardwareData,
+  hardwareSource,
+  setHardwareSource,
+  ramUnit,
+  setRamUnit,
+  onRedetectHardware,
+  activeProfile,
+  setActiveProfile,
+}) {
   return (
     <div className="space-y-4 transition-all duration-300 ease-out">
-      <HostHardwareCard hardwareData={hardwareData} setHardwareData={setHardwareData} />
+      <HostHardwareCard
+        hardwareData={hardwareData}
+        setHardwareData={setHardwareData}
+        hardwareSource={hardwareSource}
+        setHardwareSource={setHardwareSource}
+        ramUnit={ramUnit}
+        setRamUnit={setRamUnit}
+        onRedetectHardware={onRedetectHardware}
+      />
       <OperationalProfileCard activeProfile={activeProfile} setActiveProfile={setActiveProfile} />
     </div>
   );
@@ -298,32 +382,33 @@ export default function App() {
   const [fetchError, setFetchError] = useState(null);
   const [inputMode, setInputMode] = useState("github");
   const [isEditorExpanded, setIsEditorExpanded] = useState(false);
+  const [hardwareSource, setHardwareSource] = useState("system");
+  const [ramUnit, setRamUnit] = useState("MB");
 
   /* ── load live hardware on mount ── */
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadHardware() {
-      try {
-        const response = await fetch("/api/v1/hardware");
-        if (!response.ok) throw new Error(`Hardware request failed with ${response.status}`);
-        const data = await response.json();
-        if (isMounted) {
-          setHardwareData({
-            ...data,
-            total_ram_mb: Math.round(data.total_ram_mb),
-            free_ram_mb: Math.round(data.free_ram_mb),
-          });
-          setHardwareLoaded(true);
-        }
-      } catch {
-        if (isMounted) setHardwareLoaded(false);
-      }
+  const loadHardware = useCallback(async () => {
+    try {
+      const response = await fetch("/api/v1/hardware");
+      if (!response.ok) throw new Error(`Hardware request failed with ${response.status}`);
+      const data = await response.json();
+      // Ingestion interceptor: convert binary MB → decimal GB (÷1024, 1dp) → decimal MB (×1000)
+      const totalGb = Number((data.total_ram_mb / 1024).toFixed(1));
+      const freeGb  = Number((data.free_ram_mb  / 1024).toFixed(1));
+      setHardwareData({
+        ...data,
+        total_ram_mb: Math.round(totalGb * 1000),
+        free_ram_mb:  Math.round(freeGb  * 1000),
+      });
+      setHardwareLoaded(true);
+      setHardwareSource("system");
+    } catch {
+      setHardwareLoaded(false);
     }
-
-    loadHardware();
-    return () => { isMounted = false; };
   }, []);
+
+  useEffect(() => {
+    loadHardware();
+  }, [loadHardware]);
 
   /* ── derived ── */
   const statusClass = apiResponse
@@ -396,13 +481,20 @@ export default function App() {
     setAnalysisFailed(false);
 
     try {
+      // Submission serializer: re-encode decimal-MB state → binary MB integers for the backend
+      const hardwarePayload = {
+        ...hardwareData,
+        total_ram_mb: Math.round((hardwareData.total_ram_mb / 1000) * 1024),
+        free_ram_mb:  Math.round((hardwareData.free_ram_mb  / 1000) * 1024),
+      };
+
       const response = await fetch("/api/v1/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           yaml_string: yamlString,
           selected_profile: activeProfile,
-          host_hardware: hardwareData,
+          host_hardware: hardwarePayload,
         }),
       });
       const data = await response.json();
@@ -447,7 +539,7 @@ export default function App() {
           <section className="flex h-[80vh] w-11/12 max-w-5xl flex-col overflow-hidden rounded-xl border border-surface-border bg-surface shadow-2xl">
             <header className="flex items-center justify-between gap-3 border-b border-surface-border px-5 py-4">
               <div className="flex items-center gap-2">
-                <FileCode2 className="h-4 w-4 text-accent" aria-hidden="true" />
+                <FileCode className="h-5 w-5 text-zinc-400" strokeWidth={1.5} aria-hidden="true" />
                 <h2 className="text-base font-semibold text-zinc-100">Full Manifest Editor</h2>
               </div>
               <button
@@ -476,23 +568,14 @@ export default function App() {
         <div className="mx-auto max-w-7xl">
 
           {/* ── Header ── */}
-          <header className="mb-6 flex flex-col gap-4 border-b border-slate-800 pb-5 lg:flex-row lg:items-end lg:justify-between">
+          <header className="mb-6 border-b border-slate-800 pb-5">
             <div>
               <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">
-                Can My PC Self-Host This?
+                Can My PC Host This?
               </h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-500">
-                Deterministic resource budgeting for Docker Compose stacks before they hit bare metal.
+                Check it before you run it.
               </p>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2 rounded-full border border-slate-800 bg-slate-950 px-3 py-2 text-xs text-zinc-400">
-                <span
-                  className={`h-2.5 w-2.5 rounded-full ${hardwareLoaded ? "animate-pulse bg-emerald-400" : "bg-zinc-600"
-                    }`}
-                />
-                {hardwareLoaded ? "Live psutil hardware loaded" : "Manual hardware config"}
-              </div>
             </div>
           </header>
 
@@ -504,50 +587,38 @@ export default function App() {
 
               {/* YAML Workspace (dominant) */}
               <section className="rounded-xl border border-slate-700 bg-zinc-900/70 p-4">
-                <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="mb-4 flex w-full flex-row items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <FileCode2 className="h-4 w-4 text-cyan-400" aria-hidden="true" />
-                    <h2 className="text-sm font-semibold text-zinc-100">Compose Manifest</h2>
+                    <FileCode className="h-5 w-5 text-zinc-400" strokeWidth={1.5} aria-hidden="true" />
+                    <h2 className="whitespace-nowrap text-sm font-semibold text-zinc-100">Compose Manifest</h2>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div
-                      className="inline-flex rounded-lg border border-surface-border bg-surface p-0.5"
-                      role="group"
-                      aria-label="Compose manifest input mode"
+                  <div
+                    className="inline-flex rounded-lg border border-surface-border bg-surface p-0.5"
+                    role="group"
+                    aria-label="Compose manifest input mode"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setInputMode("paste")}
+                      className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
+                        inputMode === "paste"
+                          ? "bg-accent text-zinc-950"
+                          : "text-zinc-400 hover:text-zinc-100"
+                      }`}
                     >
-                      <button
-                        type="button"
-                        onClick={() => setInputMode("paste")}
-                        className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
-                          inputMode === "paste"
-                            ? "bg-accent text-zinc-950"
-                            : "text-zinc-400 hover:text-zinc-100"
-                        }`}
-                      >
-                        Manual Paste
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setInputMode("github")}
-                        className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
-                          inputMode === "github"
-                            ? "bg-accent text-zinc-950"
-                            : "text-zinc-400 hover:text-zinc-100"
-                        }`}
-                      >
-                        GitHub URL
-                      </button>
-                    </div>
-                    {inputMode === "paste" ? (
-                      <button
-                        type="button"
-                        onClick={() => setShowImport(true)}
-                        className="flex items-center gap-1.5 rounded-md border border-slate-700 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-400 transition hover:border-emerald-400/40 hover:text-emerald-300"
-                      >
-                        <Upload className="h-3 w-3" aria-hidden="true" />
-                        Import / Load YAML
-                      </button>
-                    ) : null}
+                      Manual Paste
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInputMode("github")}
+                      className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
+                        inputMode === "github"
+                          ? "bg-accent text-zinc-950"
+                          : "text-zinc-400 hover:text-zinc-100"
+                      }`}
+                    >
+                      GitHub URL
+                    </button>
                   </div>
                 </div>
 
@@ -593,26 +664,34 @@ export default function App() {
                 ) : null}
 
                 {inputMode === "paste" ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-end">
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setShowImport(true)}
+                      className="mb-3 flex items-center gap-1.5 rounded-md border border-slate-700 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-400 transition hover:border-emerald-400/40 hover:text-emerald-300"
+                    >
+                      <Upload className="h-3 w-3" aria-hidden="true" />
+                      Import / Load YAML
+                    </button>
+                    <div className="relative block w-full">
+                      <textarea
+                        id="yaml-editor"
+                        className="h-32 w-full resize-none overflow-auto rounded-lg border border-slate-800 bg-zinc-950 p-3 pr-12 font-mono text-xs leading-5 text-zinc-200 outline-none transition focus:border-emerald-400/60"
+                        placeholder="Paste the contents of your compose.yaml or docker-compose.yml file here..."
+                        spellCheck="false"
+                        value={yamlString}
+                        onChange={(event) => setYamlString(event.target.value)}
+                      />
                       <button
                         type="button"
+                        aria-label="Expand editor"
                         onClick={() => setIsEditorExpanded(true)}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-surface-border bg-surface px-2.5 py-1.5 text-xs font-medium text-zinc-400 transition hover:border-accent/50 hover:text-zinc-100"
+                        className="absolute bottom-2 right-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md border border-surface-border bg-surface/90 text-zinc-400 shadow-sm transition hover:border-accent/50 hover:bg-surface-raised hover:text-zinc-100"
                       >
-                        <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />
-                        Expand Editor
+                        <Maximize2 className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </div>
-                    <textarea
-                  id="yaml-editor"
-                  className="h-32 w-full resize-none overflow-auto rounded-lg border border-slate-800 bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-200 outline-none transition focus:border-emerald-400/60"
-                  placeholder={`Paste your docker-compose.yml here, or use Import / Load YAML above…`}
-                  spellCheck="false"
-                  value={yamlString}
-                  onChange={(event) => setYamlString(event.target.value)}
-                    />
-                  </div>
+                  </>
                 ) : null}
 
                 {/* Contextual helper — only on failure */}
@@ -632,17 +711,12 @@ export default function App() {
                 {/* Primary CTA */}
                 <button
                   id="analyze-btn"
-                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-400 px-4 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-300 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+                  className="mt-4 flex w-full items-center justify-center rounded-lg bg-emerald-400 px-4 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-300 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
                   type="button"
                   disabled={isLoading || !yamlString.trim()}
                   onClick={runAnalysis}
                 >
-                  {isLoading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  ) : (
-                    <Play className="h-4 w-4" aria-hidden="true" />
-                  )}
-                  {isLoading ? "Analyzing…" : "Analyze"}
+                  Analyze
                 </button>
               </section>
 
@@ -650,6 +724,11 @@ export default function App() {
                 <ConfigurationCards
                   hardwareData={hardwareData}
                   setHardwareData={setHardwareData}
+                  hardwareSource={hardwareSource}
+                  setHardwareSource={setHardwareSource}
+                  ramUnit={ramUnit}
+                  setRamUnit={setRamUnit}
+                  onRedetectHardware={loadHardware}
                   activeProfile={activeProfile}
                   setActiveProfile={setActiveProfile}
                 />
@@ -663,6 +742,11 @@ export default function App() {
                 <ConfigurationCards
                   hardwareData={hardwareData}
                   setHardwareData={setHardwareData}
+                  hardwareSource={hardwareSource}
+                  setHardwareSource={setHardwareSource}
+                  ramUnit={ramUnit}
+                  setRamUnit={setRamUnit}
+                  onRedetectHardware={loadHardware}
                   activeProfile={activeProfile}
                   setActiveProfile={setActiveProfile}
                 />
@@ -675,7 +759,7 @@ export default function App() {
                     <MetricCard
                       icon={Activity}
                       label="Status"
-                      value={apiResponse.status}
+                      value={STATUS_LABELS[apiResponse.status] ?? apiResponse.status}
                       detail={`${serviceCount} services / ${totalReplicas} instances`}
                       tone={statusClass.split(" ").find((item) => item.startsWith("text-"))}
                     />
@@ -705,10 +789,6 @@ export default function App() {
                     />
                   </div>
 
-                  {/* Status badge */}
-                  <div className={`inline-flex rounded-full border px-3 py-1 text-xs ${statusClass}`}>
-                    {apiResponse.status}
-                  </div>
 
                   {/* Warnings */}
                   {apiResponse.warnings?.length ? (
