@@ -1,13 +1,17 @@
 import os
+import re
+import socket
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import psutil
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .engine import run_optimization_engine
-from .schemas import AnalyzeRequest, AnalyzeResponse, HostHardware
+from .schemas import AnalyzeRequest, AnalyzeResponse, FetchManifestRequest, HostHardware
 
 
 app = FastAPI(title="Can My PC Self-Host This Backend")
@@ -17,6 +21,13 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+COMPOSE_FILENAMES = ("docker-compose.yml", "docker-compose.yaml", "compose.yml")
+GITHUB_REPO_PATTERN = re.compile(
+    r"^(?:https?://)?(?:www\.)?github\.com/"
+    r"(?P<owner>[^/\s]+)/(?P<repo>[^/\s?#]+)"
+    r"(?:/tree/(?P<branch>[^?#]+))?/?$"
 )
 
 
@@ -44,6 +55,29 @@ def detect_storage_type() -> str:
     return "SSD"
 
 
+def parse_github_repo_url(repo_url: str) -> tuple[str, str, str]:
+    cleaned_url = repo_url.strip()
+    match = GITHUB_REPO_PATTERN.match(cleaned_url)
+
+    if not match:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Please provide a GitHub repository URL like "
+                "https://github.com/owner/repo or https://github.com/owner/repo/tree/branch."
+            ),
+        )
+
+    owner = match.group("owner")
+    repo = match.group("repo").removesuffix(".git")
+    branch = match.group("branch") or "main"
+
+    if not owner or not repo or branch.startswith("/"):
+        raise HTTPException(status_code=400, detail="Could not parse the GitHub repository URL.")
+
+    return owner, repo, branch.strip("/")
+
+
 @app.get("/api/v1/hardware", response_model=HostHardware)
 def get_hardware() -> HostHardware:
     memory = psutil.virtual_memory()
@@ -60,3 +94,33 @@ def get_hardware() -> HostHardware:
 @app.post("/api/v1/analyze", response_model=AnalyzeResponse)
 def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
     return run_optimization_engine(request)
+
+
+@app.post("/api/v1/fetch-manifest")
+def fetch_manifest(request: FetchManifestRequest) -> dict[str, str]:
+    owner, repo, branch = parse_github_repo_url(request.repo_url)
+
+    for filename in COMPOSE_FILENAMES:
+        raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{filename}"
+
+        try:
+            with urllib.request.urlopen(raw_url, timeout=3.0) as response:
+                yaml_string = response.read().decode("utf-8")
+                return {"yaml_string": yaml_string}
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                continue
+            raise HTTPException(
+                status_code=400,
+                detail=f"GitHub returned HTTP {error.code} while fetching the Docker Compose manifest.",
+            ) from error
+        except (urllib.error.URLError, socket.timeout, TimeoutError) as error:
+            raise HTTPException(
+                status_code=400,
+                detail="Timed out or failed while contacting GitHub for the Docker Compose manifest.",
+            ) from error
+
+    raise HTTPException(
+        status_code=400,
+        detail="Could not locate a standard Docker Compose manifest in the root repository path.",
+    )

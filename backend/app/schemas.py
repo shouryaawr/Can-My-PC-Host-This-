@@ -16,6 +16,10 @@ class AnalyzeRequest(BaseModel):
     host_hardware: HostHardware
 
 
+class FetchManifestRequest(BaseModel):
+    repo_url: str
+
+
 class MutatedVariableDetail(BaseModel):
     model_config = ConfigDict(populate_by_name=True, serialize_by_alias=True)
 

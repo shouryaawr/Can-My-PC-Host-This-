@@ -2,11 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Cpu,
-  DatabaseZap,
   FileCode2,
   FileUp,
   Gauge,
   GitCompareArrows,
+  Github,
   HardDrive,
   Loader2,
   Network,
@@ -109,22 +109,6 @@ function NumberField({ label, value, onChange, min = 0, step = 1 }) {
   );
 }
 
-function EmptyDisplay() {
-  return (
-    <section className="flex min-h-[32rem] items-center justify-center rounded-xl border border-dashed border-slate-700 bg-zinc-900/30 p-8 text-center">
-      <div className="max-w-sm">
-        <DatabaseZap className="mx-auto h-12 w-12 text-emerald-400/60" aria-hidden="true" />
-        <h2 className="mt-5 text-xl font-semibold text-zinc-100">Workspace Ready</h2>
-        <p className="mt-3 text-sm leading-6 text-zinc-500">
-          Paste or import your <span className="font-mono text-zinc-400">docker-compose.yml</span>{" "}
-          in the editor on the left, then click <strong className="text-zinc-300">Analyze</strong>{" "}
-          to run the optimizer.
-        </p>
-      </div>
-    </section>
-  );
-}
-
 function LoadingDisplay() {
   return (
     <section className="flex min-h-[32rem] items-center justify-center rounded-xl border border-slate-800 bg-zinc-900/50 p-8">
@@ -133,6 +117,92 @@ function LoadingDisplay() {
         <p className="mt-4 text-sm font-medium text-zinc-300">Running deterministic optimizer…</p>
       </div>
     </section>
+  );
+}
+
+function HostHardwareCard({ hardwareData, setHardwareData }) {
+  return (
+    <section className="rounded-xl border border-slate-800 bg-zinc-900/70 p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <Cpu className="h-4 w-4 text-emerald-300" aria-hidden="true" />
+        <h2 className="text-sm font-semibold text-zinc-100">Host Hardware</h2>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
+        <NumberField
+          label="Total RAM MB"
+          value={hardwareData.total_ram_mb}
+          onChange={(value) =>
+            setHardwareData((current) => ({ ...current, total_ram_mb: value }))
+          }
+        />
+        <NumberField
+          label="Free RAM MB"
+          value={hardwareData.free_ram_mb}
+          onChange={(value) =>
+            setHardwareData((current) => ({ ...current, free_ram_mb: value }))
+          }
+        />
+        <NumberField
+          label="CPU Cores"
+          min={1}
+          value={hardwareData.cpu_cores}
+          onChange={(value) =>
+            setHardwareData((current) => ({ ...current, cpu_cores: value }))
+          }
+        />
+        <label className="block">
+          <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+            Storage
+          </span>
+          <select
+            className="mt-1 w-full rounded-md border border-slate-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-emerald-400/60"
+            value={hardwareData.storage_type}
+            onChange={(event) =>
+              setHardwareData((current) => ({
+                ...current,
+                storage_type: event.target.value,
+              }))
+            }
+          >
+            <option value="SSD">SSD</option>
+            <option value="HDD">HDD</option>
+            <option value="UNKNOWN">UNKNOWN</option>
+          </select>
+        </label>
+      </div>
+    </section>
+  );
+}
+
+function OperationalProfileCard({ activeProfile, setActiveProfile }) {
+  return (
+    <section className="rounded-xl border border-slate-800 bg-zinc-900/70 p-4">
+      <h2 className="text-sm font-semibold text-zinc-100">Operational Profile</h2>
+      <div className="mt-3 grid gap-2">
+        {PROFILE_OPTIONS.map((profile) => (
+          <button
+            key={profile.key}
+            className={`rounded-md border px-3 py-2 text-left text-sm transition ${activeProfile === profile.key
+                ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200"
+                : "border-slate-800 bg-zinc-950 text-zinc-400 hover:border-slate-700"
+              }`}
+            type="button"
+            onClick={() => setActiveProfile(profile.key)}
+          >
+            {profile.label}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ConfigurationCards({ hardwareData, setHardwareData, activeProfile, setActiveProfile }) {
+  return (
+    <div className="space-y-4 transition-all duration-300 ease-out">
+      <HostHardwareCard hardwareData={hardwareData} setHardwareData={setHardwareData} />
+      <OperationalProfileCard activeProfile={activeProfile} setActiveProfile={setActiveProfile} />
+    </div>
   );
 }
 
@@ -258,6 +328,9 @@ export default function App() {
   const [hardwareLoaded, setHardwareLoaded] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [analysisFailed, setAnalysisFailed] = useState(false);
+  const [githubUrl, setGithubUrl] = useState("");
+  const [fetchError, setFetchError] = useState(null);
+  const [inputMode, setInputMode] = useState("paste");
 
   /* ── load live hardware on mount ── */
   useEffect(() => {
@@ -310,6 +383,45 @@ export default function App() {
   const handleLoadBoilerplate = useCallback(() => {
     handleLoadYaml(BOILERPLATE_YAML);
   }, [handleLoadYaml]);
+
+  async function handleGithubFetch(event) {
+    event.preventDefault();
+    setFetchError(null);
+    setIsLoading(true);
+    let handledError = false;
+
+    try {
+      const response = await fetch("/api/v1/fetch-manifest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repo_url: githubUrl }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        const detail =
+          typeof errorData.detail === "string"
+            ? errorData.detail
+            : "Could not fetch a Docker Compose manifest from that repository.";
+        setFetchError(detail);
+        handledError = true;
+        throw new Error(detail);
+      }
+
+      const data = await response.json();
+      setYamlString(data.yaml_string);
+      setGithubUrl("");
+      setInputMode("paste");
+      setApiResponse(null);
+      setAnalysisFailed(false);
+    } catch (error) {
+      if (!handledError) {
+        setFetchError(error.message || "Could not fetch a Docker Compose manifest.");
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
   async function runAnalysis() {
     setIsLoading(true);
@@ -395,29 +507,104 @@ export default function App() {
 
               {/* YAML Workspace (dominant) */}
               <section className="rounded-xl border border-slate-700 bg-zinc-900/70 p-4">
-                <div className="mb-3 flex items-center justify-between">
+                <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="flex items-center gap-2">
                     <FileCode2 className="h-4 w-4 text-cyan-400" aria-hidden="true" />
                     <h2 className="text-sm font-semibold text-zinc-100">Compose Manifest</h2>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowImport(true)}
-                    className="flex items-center gap-1.5 rounded-md border border-slate-700 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-400 transition hover:border-emerald-400/40 hover:text-emerald-300"
-                  >
-                    <Upload className="h-3 w-3" aria-hidden="true" />
-                    Import / Load YAML
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div
+                      className="inline-flex rounded-lg border border-surface-border bg-surface p-0.5"
+                      role="group"
+                      aria-label="Compose manifest input mode"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setInputMode("paste")}
+                        className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
+                          inputMode === "paste"
+                            ? "bg-accent text-zinc-950"
+                            : "text-zinc-400 hover:text-zinc-100"
+                        }`}
+                      >
+                        Manual Paste
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInputMode("github")}
+                        className={`rounded-md px-2.5 py-1.5 text-xs font-medium transition ${
+                          inputMode === "github"
+                            ? "bg-accent text-zinc-950"
+                            : "text-zinc-400 hover:text-zinc-100"
+                        }`}
+                      >
+                        GitHub URL
+                      </button>
+                    </div>
+                    {inputMode === "paste" ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowImport(true)}
+                        className="flex items-center gap-1.5 rounded-md border border-slate-700 bg-zinc-950 px-2.5 py-1.5 text-xs text-zinc-400 transition hover:border-emerald-400/40 hover:text-emerald-300"
+                      >
+                        <Upload className="h-3 w-3" aria-hidden="true" />
+                        Import / Load YAML
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
 
-                <textarea
+                {inputMode === "github" ? (
+                  <form
+                    className="rounded-lg border border-surface-border bg-surface/70 p-3"
+                    onSubmit={handleGithubFetch}
+                  >
+                  <label
+                    htmlFor="github-url"
+                    className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-zinc-500"
+                  >
+                    <Github className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
+                    Import from GitHub
+                  </label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <input
+                      id="github-url"
+                      className="min-w-0 flex-1 rounded-md border border-surface-border bg-surface px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-accent focus:ring-1 focus:ring-accent/30"
+                      type="url"
+                      placeholder="https://github.com/owner/repository"
+                      value={githubUrl}
+                      onChange={(event) => setGithubUrl(event.target.value)}
+                      disabled={isLoading}
+                    />
+                    <button
+                      type="submit"
+                      disabled={isLoading || !githubUrl.trim()}
+                      className="inline-flex items-center justify-center gap-2 rounded-md border border-accent/40 bg-accent px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-accent-strong disabled:cursor-not-allowed disabled:border-surface-border disabled:bg-surface-raised disabled:text-zinc-500"
+                    >
+                      {isLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      ) : (
+                        <Github className="h-4 w-4" aria-hidden="true" />
+                      )}
+                      Fetch
+                    </button>
+                  </div>
+                  {fetchError ? (
+                    <p className="mt-2 text-xs leading-5 text-rose-300">{fetchError}</p>
+                  ) : null}
+                  </form>
+                ) : null}
+
+                {inputMode === "paste" ? (
+                  <textarea
                   id="yaml-editor"
                   className="h-[28rem] w-full rounded-lg border border-slate-800 bg-zinc-950 p-3 font-mono text-xs leading-5 text-zinc-200 outline-none transition focus:border-emerald-400/60"
                   placeholder={`Paste your docker-compose.yml here, or use Import / Load YAML above…`}
                   spellCheck="false"
                   value={yamlString}
                   onChange={(event) => setYamlString(event.target.value)}
-                />
+                  />
+                ) : null}
 
                 {/* Contextual helper — only on failure */}
                 {analysisFailed && (
@@ -450,82 +637,27 @@ export default function App() {
                 </button>
               </section>
 
-              {/* Host Hardware */}
-              <section className="rounded-xl border border-slate-800 bg-zinc-900/70 p-4">
-                <div className="mb-3 flex items-center gap-2">
-                  <Cpu className="h-4 w-4 text-emerald-300" aria-hidden="true" />
-                  <h2 className="text-sm font-semibold text-zinc-100">Host Hardware</h2>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
-                  <NumberField
-                    label="Total RAM MB"
-                    value={hardwareData.total_ram_mb}
-                    onChange={(value) =>
-                      setHardwareData((current) => ({ ...current, total_ram_mb: value }))
-                    }
-                  />
-                  <NumberField
-                    label="Free RAM MB"
-                    value={hardwareData.free_ram_mb}
-                    onChange={(value) =>
-                      setHardwareData((current) => ({ ...current, free_ram_mb: value }))
-                    }
-                  />
-                  <NumberField
-                    label="CPU Cores"
-                    min={1}
-                    value={hardwareData.cpu_cores}
-                    onChange={(value) =>
-                      setHardwareData((current) => ({ ...current, cpu_cores: value }))
-                    }
-                  />
-                  <label className="block">
-                    <span className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                      Storage
-                    </span>
-                    <select
-                      className="mt-1 w-full rounded-md border border-slate-800 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-emerald-400/60"
-                      value={hardwareData.storage_type}
-                      onChange={(event) =>
-                        setHardwareData((current) => ({
-                          ...current,
-                          storage_type: event.target.value,
-                        }))
-                      }
-                    >
-                      <option value="SSD">SSD</option>
-                      <option value="HDD">HDD</option>
-                      <option value="UNKNOWN">UNKNOWN</option>
-                    </select>
-                  </label>
-                </div>
-              </section>
-
-              {/* Operational Profile */}
-              <section className="rounded-xl border border-slate-800 bg-zinc-900/70 p-4">
-                <h2 className="text-sm font-semibold text-zinc-100">Operational Profile</h2>
-                <div className="mt-3 grid gap-2">
-                  {PROFILE_OPTIONS.map((profile) => (
-                    <button
-                      key={profile.key}
-                      className={`rounded-md border px-3 py-2 text-left text-sm transition ${activeProfile === profile.key
-                          ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200"
-                          : "border-slate-800 bg-zinc-950 text-zinc-400 hover:border-slate-700"
-                        }`}
-                      type="button"
-                      onClick={() => setActiveProfile(profile.key)}
-                    >
-                      {profile.label}
-                    </button>
-                  ))}
-                </div>
-              </section>
+              {apiResponse ? (
+                <ConfigurationCards
+                  hardwareData={hardwareData}
+                  setHardwareData={setHardwareData}
+                  activeProfile={activeProfile}
+                  setActiveProfile={setActiveProfile}
+                />
+              ) : null}
             </aside>
 
             {/* ── RIGHT PANEL ── */}
             <section className="space-y-4 xl:col-span-8">
               {isLoading ? <LoadingDisplay /> : null}
-              {!isLoading && !apiResponse ? <EmptyDisplay /> : null}
+              {!isLoading && !apiResponse ? (
+                <ConfigurationCards
+                  hardwareData={hardwareData}
+                  setHardwareData={setHardwareData}
+                  activeProfile={activeProfile}
+                  setActiveProfile={setActiveProfile}
+                />
+              ) : null}
 
               {!isLoading && apiResponse ? (
                 <>

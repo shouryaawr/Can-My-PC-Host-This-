@@ -1,5 +1,7 @@
 import json
+import logging
 import re
+from copy import deepcopy
 from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
@@ -17,7 +19,25 @@ from .schemas import (
 )
 
 
+logger = logging.getLogger(__name__)
+
 MAX_ITERATIONS = 50
+BACKEND_TIER_NAME = "backend"
+SAFE_HOST_PROFILES = {
+    "silent_running": {"cpu_threshold_multiplier": 0.80, "ram_safety_buffer": 0.70},
+    "max_performance": {"cpu_threshold_multiplier": 1.50, "ram_safety_buffer": 0.95},
+    "background_dev": {"cpu_threshold_multiplier": 1.00, "ram_safety_buffer": 0.50},
+}
+SAFE_BACKEND_TIER = {
+    "base_ram_mb": 64.00,
+    "base_cpu": 0.10,
+    "ram_scaling_factor": 0.00,
+    "default_max_variables": {},
+}
+SAFE_BACKEND_FLOOR = {
+    "ram_mb": 32.00,
+    "variables": {},
+}
 
 
 @dataclass
@@ -49,7 +69,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             warnings=warnings,
         )
 
-    profiles = _load_profiles()
+    profiles = _load_safe_profiles(trace)
     yaml = YAML(typ="rt")
     yaml.preserve_quotes = True
 
@@ -78,7 +98,12 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
         ServiceContext(
             name=name,
             node=services[name],
-            tier=_classify_service(services[name], profiles),
+            tier=_safe_tier(
+                _classify_service(services[name], profiles, service_name=name, trace=trace),
+                profiles,
+                service_name=name,
+                trace=trace,
+            ),
             replicas=_extract_replicas(services[name]),
         )
         for name in service_order
@@ -104,7 +129,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             services=contexts,
         )
 
-    profile = profiles["host_profiles"][payload.selected_profile]
+    profile = _host_profile(payload.selected_profile, profiles, trace)
     effective_free_ram = payload.host_hardware.free_ram_mb * profile["ram_safety_buffer"]
     cpu_budget = payload.host_hardware.cpu_cores * profile["cpu_threshold_multiplier"]
 
@@ -319,6 +344,211 @@ def _load_profiles() -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _load_safe_profiles(trace: list[str]) -> dict[str, Any]:
+    try:
+        profiles = _load_profiles()
+    except Exception as exc:
+        logger.exception("Could not load profiles.json; using safe fallback profile structure.")
+        trace.append(
+            "[Profiles] Could not load profiles.json; using safe fallback profile structure: "
+            f"{exc}"
+        )
+        profiles = {}
+
+    return _validate_profiles(profiles, trace)
+
+
+def _validate_profiles(profiles: Any, trace: list[str]) -> dict[str, Any]:
+    if not isinstance(profiles, dict):
+        logger.error("profiles.json root must be a JSON object; got %s.", type(profiles).__name__)
+        trace.append(
+            "[Profiles] profiles.json root must be an object; using safe fallback profile "
+            "structure."
+        )
+        profiles = {}
+
+    validated = dict(profiles)
+
+    if not isinstance(validated.get("host_profiles"), dict):
+        logger.error("profiles.json host_profiles must be an object; using safe host defaults.")
+        trace.append(
+            "[Profiles] profiles.json host_profiles must be an object; using safe host "
+            "profile defaults."
+        )
+        validated["host_profiles"] = deepcopy(SAFE_HOST_PROFILES)
+
+    if not isinstance(validated.get("tiers"), dict):
+        logger.error("profiles.json tiers must be an object; using empty safe tier dictionary.")
+        trace.append(
+            "[Profiles] profiles.json tiers must be an object; using empty safe tier "
+            "dictionary."
+        )
+        validated["tiers"] = {}
+
+    if not isinstance(validated.get("floors"), dict):
+        logger.error("profiles.json floors must be an object; using empty safe floor dictionary.")
+        trace.append(
+            "[Profiles] profiles.json floors must be an object; using empty safe floor "
+            "dictionary."
+        )
+        validated["floors"] = {}
+
+    _validate_tier_dictionaries(validated, trace)
+
+    if not isinstance(validated.get("image_lookup_table"), dict):
+        logger.error(
+            "profiles.json image_lookup_table must be an object; using empty lookup table."
+        )
+        trace.append(
+            "[Profiles] profiles.json image_lookup_table must be an object; using empty "
+            "image lookup table."
+        )
+        validated["image_lookup_table"] = {}
+
+    _ensure_backend_fallback(validated)
+    return validated
+
+
+def _validate_tier_dictionaries(profiles: dict[str, Any], trace: list[str]) -> None:
+    tiers = profiles["tiers"]
+    floors = profiles["floors"]
+
+    for tier_name, tier_config in list(tiers.items()):
+        if _valid_tier_config(tier_config):
+            continue
+
+        logger.error("Tier profile %r is malformed and will be ignored.", tier_name)
+        trace.append(
+            f"[Profiles] Tier profile '{tier_name}' is malformed; services using it will "
+            f"fall back to '{BACKEND_TIER_NAME}'."
+        )
+        tiers.pop(tier_name, None)
+
+    for tier_name, floor_config in list(floors.items()):
+        if _valid_floor_config(floor_config):
+            continue
+
+        logger.error("Floor profile %r is malformed and will be ignored.", tier_name)
+        trace.append(
+            f"[Profiles] Floor profile '{tier_name}' is malformed; services using it will "
+            f"fall back to '{BACKEND_TIER_NAME}'."
+        )
+        floors.pop(tier_name, None)
+
+
+def _valid_tier_config(config: Any) -> bool:
+    return (
+        isinstance(config, dict)
+        and _is_json_number(config.get("base_ram_mb"))
+        and _is_json_number(config.get("base_cpu"))
+        and _is_json_number(config.get("ram_scaling_factor"))
+        and isinstance(config.get("default_max_variables"), dict)
+    )
+
+
+def _valid_floor_config(config: Any) -> bool:
+    return (
+        isinstance(config, dict)
+        and _is_json_number(config.get("ram_mb"))
+        and isinstance(config.get("variables"), dict)
+    )
+
+
+def _is_json_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _ensure_backend_fallback(profiles: dict[str, Any]) -> None:
+    if not isinstance(profiles.get("tiers"), dict):
+        profiles["tiers"] = {}
+    if not isinstance(profiles.get("floors"), dict):
+        profiles["floors"] = {}
+
+    profiles["tiers"].setdefault(BACKEND_TIER_NAME, deepcopy(SAFE_BACKEND_TIER))
+    profiles["floors"].setdefault(BACKEND_TIER_NAME, deepcopy(SAFE_BACKEND_FLOOR))
+
+
+def _safe_tier(
+    tier: Any,
+    profiles: dict[str, Any],
+    service_name: str | None = None,
+    trace: list[str] | None = None,
+) -> str:
+    if isinstance(tier, str):
+        normalized_tier = tier.strip().lower()
+    else:
+        normalized_tier = ""
+
+    if not normalized_tier:
+        _record_backend_tier_fallback(
+            service_name,
+            f"invalid tier token {tier!r}",
+            trace,
+        )
+        return BACKEND_TIER_NAME
+
+    if (
+        normalized_tier in profiles.get("tiers", {})
+        and normalized_tier in profiles.get("floors", {})
+    ):
+        return normalized_tier
+
+    _ensure_backend_fallback(profiles)
+    _record_backend_tier_fallback(
+        service_name,
+        f"tier '{normalized_tier}' is missing from tiers or floors configuration",
+        trace,
+    )
+    return BACKEND_TIER_NAME
+
+
+def _host_profile(
+    selected_profile: str,
+    profiles: dict[str, Any],
+    trace: list[str],
+) -> dict[str, float]:
+    host_profiles = profiles.get("host_profiles", {})
+    profile = host_profiles.get(selected_profile) if isinstance(host_profiles, dict) else None
+    if (
+        isinstance(profile, dict)
+        and _is_json_number(profile.get("ram_safety_buffer"))
+        and _is_json_number(profile.get("cpu_threshold_multiplier"))
+    ):
+        return profile
+
+    fallback_name = "background_dev"
+    logger.error(
+        "Host profile %r is missing or malformed; using %s.",
+        selected_profile,
+        fallback_name,
+    )
+    trace.append(
+        f"[Profiles] Host profile '{selected_profile}' is missing or malformed; "
+        f"using '{fallback_name}'."
+    )
+    return deepcopy(SAFE_HOST_PROFILES[fallback_name])
+
+
+def _record_backend_tier_fallback(
+    service_name: str | None,
+    reason: str,
+    trace: list[str] | None,
+) -> None:
+    rendered_service = service_name or "<unknown>"
+    message = (
+        f"[Profiles] Service '{rendered_service}' fell back to default "
+        f"'{BACKEND_TIER_NAME}' tier because {reason}."
+    )
+    logger.warning(message)
+    if trace is not None:
+        trace.append(message)
+
+
+def _safe_image_lookup_table(profiles: dict[str, Any]) -> dict[str, Any]:
+    lookup_table = profiles.get("image_lookup_table", {})
+    return lookup_table if isinstance(lookup_table, dict) else {}
+
+
 def _extract_services(document: Any) -> dict[str, Any]:
     if isinstance(document, dict) and isinstance(document.get("services"), dict):
         return document["services"]
@@ -335,7 +565,12 @@ def _extract_replicas(service: Any) -> int:
         return 1
 
 
-def _classify_service(service: Any, profiles: dict[str, Any]) -> str:
+def _classify_service(
+    service: Any,
+    profiles: dict[str, Any],
+    service_name: str | None = None,
+    trace: list[str] | None = None,
+) -> str:
     strings = [item.lower() for item in _walk_strings(service)]
     for value in strings:
         if "compiler.tier" in value:
@@ -344,7 +579,7 @@ def _classify_service(service: Any, profiles: dict[str, Any]) -> str:
                     return tier_name
 
     image = str(service.get("image", "") if isinstance(service, dict) else "").lower()
-    for image_fragment, tier in profiles["image_lookup_table"].items():
+    for image_fragment, tier in _safe_image_lookup_table(profiles).items():
         if image_fragment in image:
             return tier
 
@@ -364,7 +599,12 @@ def _classify_service(service: Any, profiles: dict[str, Any]) -> str:
     if any(k in t for t in tokens for k in {"worker", "celery", "beat", "queue"}):
         return "backend_low_priority"
 
-    return "backend"
+    _record_backend_tier_fallback(
+        service_name,
+        "no explicit tier, image, port, or keyword classifier matched",
+        trace,
+    )
+    return BACKEND_TIER_NAME
 
 
 def _walk_strings(value: Any) -> list[str]:

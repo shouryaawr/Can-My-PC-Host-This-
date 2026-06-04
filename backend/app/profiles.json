@@ -34,6 +34,12 @@
       "base_cpu": 0.05, 
       "ram_scaling_factor": 0.00,
       "default_max_variables": {}
+    },
+    "backend": {
+      "base_ram_mb": 64.00,
+      "base_cpu": 0.10,
+      "ram_scaling_factor": 0.00,
+      "default_max_variables": {}
     }
   },
   "floors": {
@@ -41,7 +47,8 @@
     "backend_hybrid": { "ram_mb": 64.00, "variables": { "WORKERS": 1, "WEB_CONCURRENCY": 1 } },
     "backend_low_priority": { "ram_mb": 32.00, "variables": {} },
     "cache": { "ram_mb": 16.00, "variables": { "maxmemory": 16 } },
-    "frontend": { "ram_mb": 8.00, "variables": {} }
+    "frontend": { "ram_mb": 8.00, "variables": {} },
+    "backend": { "ram_mb": 32.00, "variables": {} }
   },
   "image_lookup_table": {
     "postgres": "database", "mysql": "database", "mariadb": "database", "mongo": "database",
