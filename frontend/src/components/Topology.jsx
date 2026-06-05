@@ -1,4 +1,5 @@
-import { Database, HardDrive, Layers, Network, Server, ShieldAlert } from "lucide-react";
+import { useState } from "react";
+import { ChevronDown, Database, HardDrive, Layers, Network, Server, ShieldAlert } from "lucide-react";
 
 const COLUMN_DEFINITIONS = [
   {
@@ -59,6 +60,8 @@ function getCompressionPercent(service) {
 }
 
 function ServiceCard({ service }) {
+  const [expanded, setExpanded] = useState(false);
+
   const tierStyle = TIER_STYLES[service.tier] || TIER_STYLES.backend_low_priority;
   const TierIcon = tierStyle.icon;
   const initialRam = Number(service.initial_ram_mb || 0);
@@ -71,10 +74,25 @@ function ServiceCard({ service }) {
       ? "bg-amber-400"
       : "bg-emerald-400";
 
+  const changeLabel = isMutated
+    ? `${formatRam(initialRam)} → ${formatRam(finalRam)}`
+    : `${formatRam(finalRam)} (Optimal)`;
+  const reason = isMutated
+    ? (service.reason || "Reduced background worker count to protect host headroom.")
+    : (service.reason || "Resource allocation matches current runtime needs.");
+  const impact = isMutated
+    ? (service.impact || "Lower continuous memory overhead; minor concurrency limit under maximum load.")
+    : (service.impact || "No baseline changes required.");
+
   return (
     <article className="overflow-hidden rounded-lg border border-slate-800 bg-zinc-950/80 shadow-sm shadow-black/20">
       <div className="space-y-4 p-3">
-        <header className="flex items-start gap-3">
+        <button
+          type="button"
+          className="flex w-full items-start gap-3 text-left"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((prev) => !prev)}
+        >
           <div className={`rounded-md p-2 ${tierStyle.iconShell}`}>
             <TierIcon className="h-4 w-4" aria-hidden="true" />
           </div>
@@ -91,7 +109,11 @@ function ServiceCard({ service }) {
               {service.tier}
             </span>
           </div>
-        </header>
+          <ChevronDown
+            className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-600 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
+            aria-hidden="true"
+          />
+        </button>
 
         <div>
           <div className="mb-2 flex items-center justify-between font-mono text-xs">
@@ -116,6 +138,23 @@ function ServiceCard({ service }) {
           </div>
         </div>
       </div>
+
+      {expanded && (
+        <div className="space-y-1.5 border-t border-slate-800 px-3 py-2">
+          <div className="flex items-baseline gap-2">
+            <span className="w-12 shrink-0 text-[10px] uppercase tracking-wide text-zinc-500">change</span>
+            <span className="font-mono text-[11px] text-zinc-200">{changeLabel}</span>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="w-12 shrink-0 text-[10px] uppercase tracking-wide text-zinc-500">reason</span>
+            <span className="text-[11px] text-zinc-300">{reason}</span>
+          </div>
+          <div className="flex items-baseline gap-2">
+            <span className="w-12 shrink-0 text-[10px] uppercase tracking-wide text-zinc-500">impact</span>
+            <span className="text-[11px] text-zinc-400">{impact}</span>
+          </div>
+        </div>
+      )}
 
       {service.cgroups_injected ? (
         <footer className="flex items-center gap-2 border-t border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-amber-300">

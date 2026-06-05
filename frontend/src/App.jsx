@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Cpu,
+  Download,
   FileCode,
   FileUp,
   Gauge,
@@ -14,10 +15,12 @@ import {
   RotateCcw,
   ScrollText,
   Server,
+  ShieldAlert,
   Upload,
   X,
 } from "lucide-react";
 
+import Diagnostics from "./components/Diagnostics.jsx";
 import DiffViewer from "./components/DiffViewer.jsx";
 import Topology from "./components/Topology.jsx";
 import TraceLog from "./components/TraceLog.jsx";
@@ -50,12 +53,14 @@ const PROFILE_OPTIONS = [
   { key: "silent_running", label: "Silent Running" },
   { key: "max_performance", label: "Max Performance" },
   { key: "background_dev", label: "Background Dev" },
+  { key: "custom", label: "Advanced / Custom" },
 ];
 
 const TAB_OPTIONS = [
-  { key: "diff", label: "Diff Viewer", icon: GitCompareArrows },
-  { key: "topology", label: "Node Topology", icon: Network },
-  { key: "trace", label: "Rule Trace", icon: ScrollText },
+  { key: "diff",        label: "Diff Viewer",   icon: GitCompareArrows },
+  { key: "topology",   label: "Node Topology",  icon: Network },
+  { key: "trace",      label: "Rule Trace",     icon: ScrollText },
+  { key: "diagnostics",label: "Diagnostics",    icon: ShieldAlert },
 ];
 
 const STATUS_CLASSES = {
@@ -241,7 +246,7 @@ function HostHardwareCard({
   );
 }
 
-function OperationalProfileCard({ activeProfile, setActiveProfile }) {
+function OperationalProfileCard({ activeProfile, setActiveProfile, customConfig, setCustomConfig }) {
   return (
     <section className="rounded-xl border border-slate-800 bg-zinc-900/70 p-4">
       <h2 className="text-sm font-semibold text-zinc-100">Operational Profile</h2>
@@ -249,10 +254,13 @@ function OperationalProfileCard({ activeProfile, setActiveProfile }) {
         {PROFILE_OPTIONS.map((profile) => (
           <button
             key={profile.key}
-            className={`rounded-md border px-3 py-2 text-left text-sm transition ${activeProfile === profile.key
-                ? "border-emerald-400/40 bg-emerald-400/10 text-emerald-200"
+            className={`rounded-md border px-3 py-2 text-left text-sm transition ${
+              activeProfile === profile.key
+                ? profile.key === "custom"
+                  ? "border-violet-400/40 bg-violet-400/10 text-violet-200"
+                  : "border-emerald-400/40 bg-emerald-400/10 text-emerald-200"
                 : "border-slate-800 bg-zinc-950 text-zinc-400 hover:border-slate-700"
-              }`}
+            }`}
             type="button"
             onClick={() => setActiveProfile(profile.key)}
           >
@@ -260,6 +268,182 @@ function OperationalProfileCard({ activeProfile, setActiveProfile }) {
           </button>
         ))}
       </div>
+
+      {/* Custom sliders — revealed only when custom is active */}
+      {activeProfile === "custom" && (
+        <div className="mt-4 space-y-4 rounded-lg border border-violet-400/20 bg-violet-400/5 p-3">
+          <p className="text-[0.68rem] font-medium uppercase tracking-wide text-violet-300/70">
+            Custom Tuning Parameters
+          </p>
+
+          {/* RAM Safety Buffer */}
+          <label className="block">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs font-medium text-zinc-400">RAM Safety Buffer</span>
+              <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-violet-300">
+                {customConfig.ram_safety_buffer.toFixed(2)}
+              </span>
+            </div>
+            <div className="relative flex items-center">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-violet-400"
+                style={{
+                  width: `${((customConfig.ram_safety_buffer - 0.0) / (1.0 - 0.0)) * 100}%`,
+                }}
+              />
+              <input
+                id="custom-ram-safety-buffer"
+                type="range"
+                min={0.0}
+                max={1.0}
+                step={0.05}
+                value={customConfig.ram_safety_buffer}
+                onChange={(e) =>
+                  setCustomConfig((c) => ({ ...c, ram_safety_buffer: Number(e.target.value) }))
+                }
+                className="custom-slider w-full"
+              />
+            </div>
+            <div className="mt-0.5 flex justify-between text-[0.65rem] text-zinc-600">
+              <span>0.00</span><span>1.00</span>
+            </div>
+          </label>
+
+          {/* CPU Threshold Multiplier */}
+          <label className="block">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs font-medium text-zinc-400">CPU Threshold Multiplier</span>
+              <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-violet-300">
+                {customConfig.cpu_threshold_multiplier.toFixed(1)}×
+              </span>
+            </div>
+            <div className="relative flex items-center">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-violet-400"
+                style={{
+                  width: `${((customConfig.cpu_threshold_multiplier - 0.5) / (2.0 - 0.5)) * 100}%`,
+                }}
+              />
+              <input
+                id="custom-cpu-threshold-multiplier"
+                type="range"
+                min={0.5}
+                max={2.0}
+                step={0.1}
+                value={customConfig.cpu_threshold_multiplier}
+                onChange={(e) =>
+                  setCustomConfig((c) => ({ ...c, cpu_threshold_multiplier: Number(e.target.value) }))
+                }
+                className="custom-slider w-full"
+              />
+            </div>
+            <div className="mt-0.5 flex justify-between text-[0.65rem] text-zinc-600">
+              <span>0.5×</span><span>2.0×</span>
+            </div>
+          </label>
+
+          {/* Max Loop Iterations */}
+          <div className="block">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs font-medium text-zinc-400">Max Loop Iterations</span>
+              <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-violet-300">
+                {customConfig.max_iterations}
+              </span>
+            </div>
+            <input
+              id="custom-max-iterations"
+              type="number"
+              min={1}
+              max={100}
+              value={customConfig.max_iterations}
+              onChange={(e) =>
+                setCustomConfig((c) => ({
+                  ...c,
+                  max_iterations: Math.min(100, Math.max(1, Number(e.target.value) || 1)),
+                }))
+              }
+              className="w-full rounded-md border border-slate-700 bg-zinc-950 px-3 py-1.5 text-sm text-zinc-100 outline-none transition focus:border-violet-400/60"
+            />
+            <p className="mt-1 text-[0.65rem] leading-4 text-zinc-500">
+              Higher values yield tighter optimization on complex manifests at the cost of
+              processing time.
+            </p>
+          </div>
+
+          {/* Allow Cgroups Fallback */}
+          <div className="block">
+            <label
+              htmlFor="custom-allow-cgroups"
+              className="flex cursor-pointer items-start gap-3"
+            >
+              <div className="relative mt-0.5 shrink-0">
+                <input
+                  id="custom-allow-cgroups"
+                  type="checkbox"
+                  checked={customConfig.allow_cgroups}
+                  onChange={(e) =>
+                    setCustomConfig((c) => ({ ...c, allow_cgroups: e.target.checked }))
+                  }
+                  className="peer h-4 w-4 cursor-pointer appearance-none rounded border border-slate-600 bg-zinc-950 transition checked:border-violet-400 checked:bg-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-400/40"
+                />
+                <svg
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-0 hidden h-4 w-4 text-zinc-950 peer-checked:block"
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
+                >
+                  <path d="M6.5 11.5 3 8l1.4-1.4 2.1 2.1 5-5L13 5l-6.5 6.5z" />
+                </svg>
+              </div>
+              <div>
+                <span className="text-xs font-medium text-zinc-400">Allow Cgroups Fallback</span>
+                <p className="mt-0.5 text-[0.65rem] leading-4 text-zinc-500">
+                  When disabled, the engine returns{" "}
+                  <span className="font-mono text-rose-400">UNSOLVABLE</span>{" "}
+                  instead of applying hard kernel memory limits when soft tuning cannot fit the
+                  stack.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          {/* RAM Floor Strictness */}
+          <label className="block">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs font-medium text-zinc-400">RAM Floor Strictness</span>
+              <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-xs text-violet-300">
+                {customConfig.floor_strictness.toFixed(2)}×
+              </span>
+            </div>
+            <div className="relative flex items-center">
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-violet-400"
+                style={{
+                  width: `${((customConfig.floor_strictness - 0.5) / (1.5 - 0.5)) * 100}%`,
+                }}
+              />
+              <input
+                id="custom-floor-strictness"
+                type="range"
+                min={0.5}
+                max={1.5}
+                step={0.05}
+                value={customConfig.floor_strictness}
+                onChange={(e) =>
+                  setCustomConfig((c) => ({ ...c, floor_strictness: Number(e.target.value) }))
+                }
+                className="custom-slider w-full"
+              />
+            </div>
+            <div className="mt-0.5 flex justify-between text-[0.65rem] text-zinc-600">
+              <span>0.50×</span><span>1.50×</span>
+            </div>
+          </label>
+        </div>
+      )}
     </section>
   );
 }
@@ -274,6 +458,8 @@ function ConfigurationCards({
   onRedetectHardware,
   activeProfile,
   setActiveProfile,
+  customConfig,
+  setCustomConfig,
 }) {
   return (
     <div className="space-y-4 transition-all duration-300 ease-out">
@@ -286,7 +472,12 @@ function ConfigurationCards({
         setRamUnit={setRamUnit}
         onRedetectHardware={onRedetectHardware}
       />
-      <OperationalProfileCard activeProfile={activeProfile} setActiveProfile={setActiveProfile} />
+      <OperationalProfileCard
+        activeProfile={activeProfile}
+        setActiveProfile={setActiveProfile}
+        customConfig={customConfig}
+        setCustomConfig={setCustomConfig}
+      />
     </div>
   );
 }
@@ -301,7 +492,7 @@ function ImportModal({ onClose, onLoad }) {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (e) => {
-      onLoad(e.target.result || "");
+      onLoad(e.target.result || "", file.name);
       onClose();
     };
     reader.readAsText(file);
@@ -384,6 +575,14 @@ export default function App() {
   const [isEditorExpanded, setIsEditorExpanded] = useState(false);
   const [hardwareSource, setHardwareSource] = useState("system");
   const [ramUnit, setRamUnit] = useState("MB");
+  const [sourceFilename, setSourceFilename] = useState("docker-compose.yml");
+  const [customConfig, setCustomConfig] = useState({
+    ram_safety_buffer: 0.75,
+    cpu_threshold_multiplier: 1.0,
+    max_iterations: 50,
+    allow_cgroups: true,
+    floor_strictness: 1.0,
+  });
 
   /* ── load live hardware on mount ── */
   const loadHardware = useCallback(async () => {
@@ -432,6 +631,13 @@ export default function App() {
     setAnalysisFailed(false);
   }, []);
 
+  const handleLoadYamlFile = useCallback((yaml, filename) => {
+    setYamlString(yaml);
+    setApiResponse(null);
+    setAnalysisFailed(false);
+    if (filename) setSourceFilename(filename);
+  }, []);
+
   const handleLoadBoilerplate = useCallback(() => {
     handleLoadYaml(BOILERPLATE_YAML);
   }, [handleLoadYaml]);
@@ -462,6 +668,7 @@ export default function App() {
 
       const data = await response.json();
       setYamlString(data.yaml_string);
+      setSourceFilename("docker-compose.yml");
       setGithubUrl("");
       setInputMode("paste");
       setApiResponse(null);
@@ -488,14 +695,27 @@ export default function App() {
         free_ram_mb:  Math.round((hardwareData.free_ram_mb  / 1000) * 1024),
       };
 
+      const requestBody = {
+        yaml_string: yamlString,
+        selected_profile: activeProfile,
+        host_hardware: hardwarePayload,
+        ...(activeProfile === "custom"
+          ? {
+              custom_profile_config: {
+                ram_safety_buffer: customConfig.ram_safety_buffer,
+                cpu_threshold_multiplier: customConfig.cpu_threshold_multiplier,
+                max_iterations: customConfig.max_iterations,
+                allow_cgroups: customConfig.allow_cgroups,
+                floor_strictness: customConfig.floor_strictness,
+              },
+            }
+          : {}),
+      };
+
       const response = await fetch("/api/v1/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          yaml_string: yamlString,
-          selected_profile: activeProfile,
-          host_hardware: hardwarePayload,
-        }),
+        body: JSON.stringify(requestBody),
       });
       const data = await response.json();
       setApiResponse(data);
@@ -527,11 +747,25 @@ export default function App() {
     }
   }
 
+  function handleDownload() {
+    const content = apiResponse?.optimized_yaml_string;
+    if (!content) return;
+    const base = sourceFilename.replace(/\.ya?ml$/i, "");
+    const exportName = `${base}.optimized.yml`;
+    const blob = new Blob([content], { type: "text/yaml" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = exportName;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
   /* ── render ── */
   return (
     <>
       {showImport && (
-        <ImportModal onClose={() => setShowImport(false)} onLoad={handleLoadYaml} />
+        <ImportModal onClose={() => setShowImport(false)} onLoad={handleLoadYamlFile} />
       )}
 
       {isEditorExpanded && (
@@ -731,6 +965,8 @@ export default function App() {
                   onRedetectHardware={loadHardware}
                   activeProfile={activeProfile}
                   setActiveProfile={setActiveProfile}
+                  customConfig={customConfig}
+                  setCustomConfig={setCustomConfig}
                 />
               ) : null}
             </aside>
@@ -749,6 +985,8 @@ export default function App() {
                   onRedetectHardware={loadHardware}
                   activeProfile={activeProfile}
                   setActiveProfile={setActiveProfile}
+                  customConfig={customConfig}
+                  setCustomConfig={setCustomConfig}
                 />
               ) : null}
 
@@ -778,14 +1016,20 @@ export default function App() {
                     />
                     <MetricCard
                       icon={HardDrive}
-                      label="RAM Margin"
+                      label="Post-Allocation Memory"
                       value={formatMetric(apiResponse.metrics.ram_margin_mb)}
-                      detail={`${Math.round(apiResponse.metrics.cpu_saturation_pct || 0)}% CPU saturation`}
-                      tone={
-                        Number(apiResponse.metrics.ram_margin_mb || 0) >= 0
-                          ? "text-emerald-300"
-                          : "text-rose-300"
-                      }
+                      detail={(() => {
+                        const remainMb = Number(apiResponse.metrics.ram_margin_mb || 0);
+                        return remainMb < 1024
+                          ? "Low memory headroom"
+                          : "Memory headroom within safe range";
+                      })()}
+                      tone={(() => {
+                        const remainMb = Number(apiResponse.metrics.ram_margin_mb || 0);
+                        if (remainMb < 256) return "text-rose-400";
+                        if (remainMb < 1024) return "text-amber-400";
+                        return "text-emerald-300";
+                      })()}
                     />
                   </div>
 
@@ -824,6 +1068,8 @@ export default function App() {
                       <DiffViewer
                         originalYaml={yamlString}
                         optimizedYaml={apiResponse.optimized_yaml_string}
+                        onDownload={handleDownload}
+                        sourceFilename={sourceFilename}
                       />
                     ) : null}
                     {activeTab === "topology" ? (
@@ -832,7 +1078,10 @@ export default function App() {
                       </div>
                     ) : null}
                     {activeTab === "trace" ? (
-                      <TraceLog trace={apiResponse.execution_trace} />
+                      <TraceLog trace={apiResponse.execution_trace} activeProfile={activeProfile} />
+                    ) : null}
+                    {activeTab === "diagnostics" ? (
+                      <Diagnostics response={apiResponse} />
                     ) : null}
                   </section>
                 </>

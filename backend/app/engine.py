@@ -13,6 +13,7 @@ from ruamel.yaml.comments import CommentedMap
 from .schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
+    CustomProfileConfig,
     MutatedVariableDetail,
     OptimizationMetrics,
     ServiceAnalysisResult,
@@ -52,6 +53,9 @@ class ServiceContext:
     cpu: float = 0.0
     variables_mutated: dict[str, MutatedVariableDetail] = field(default_factory=dict)
     cgroups_injected: bool = False
+    # x-tuning extension fields
+    xtuning_ram_floor_mb: float | None = None
+    xtuning_never_cgroup: bool = False
 
 
 def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
@@ -93,6 +97,8 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             warnings=warnings,
         )
 
+    _check_port_conflicts(document, warnings)
+
     services = _extract_services(document)
     if not services:
         return _response(
@@ -115,6 +121,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
                 trace=trace,
             ),
             replicas=_extract_replicas(services[name]),
+            **_extract_xtuning(services[name], name, trace),
         )
         for name in service_order
     ]
@@ -139,13 +146,14 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             services=contexts,
         )
 
-    profile = _host_profile(payload.selected_profile, profiles, trace)
+    profile = _host_profile(payload.selected_profile, profiles, trace, payload.custom_profile_config)
     effective_free_ram = payload.host_hardware.free_ram_mb * profile["ram_safety_buffer"]
     cpu_budget = payload.host_hardware.cpu_cores * profile["cpu_threshold_multiplier"]
 
     # Calculate initial baseline footprints based on service tiers
+    storage_type = payload.host_hardware.storage_type
     _inject_missing_defaults(contexts, profiles)
-    _recalculate(contexts, profiles)
+    _recalculate(contexts, profiles, storage_type)
     initial_predicted_ram = sum(service.current_ram_mb for service in contexts)
 
     if initial_predicted_ram > 0.80 * effective_free_ram:
@@ -181,15 +189,22 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
         f"host gaps are {round(m_gap, 1)}MB RAM and {round(c_gap, 2)} CPU."
     )
 
+    # Resolve per-request knobs from the custom profile config, falling back to
+    # safe neutral values so non-custom requests are completely unaffected.
+    cfg = payload.custom_profile_config
+    iteration_cap = cfg.max_iterations if cfg is not None else MAX_ITERATIONS
+    allow_cgroups = cfg.allow_cgroups if cfg is not None else True
+    floor_strictness = cfg.floor_strictness if cfg is not None else 1.0
+
     # Check host limits and scale down services if memory is tight
     cgroups_used = False
     current_iteration = 0
-    while (m_gap > 0 or c_gap > 0) and current_iteration < MAX_ITERATIONS:
+    while (m_gap > 0 or c_gap > 0) and current_iteration < iteration_cap:
         current_iteration += 1
         changes = 0
 
         for service in contexts:
-            if _at_floor(service, profiles) or service.tier == "backend_low_priority":
+            if _at_floor(service, profiles, floor_strictness) or service.tier == "backend_low_priority":
                 continue
 
             variable_name = _primary_variable_name(service.tier)
@@ -212,7 +227,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
 
                 _write_env_value(service.node, variable_name, next_value)
                 _record_mutation(service, variable_name, current_value, next_value)
-                service.current_ram_mb = _service_ram(service, profiles)
+                service.current_ram_mb = _service_ram(service, profiles, storage_type)
                 service.final_ram_mb = service.current_ram_mb
                 service.cpu = _service_cpu(service, profiles)
                 m_predicted = sum(item.current_ram_mb for item in contexts)
@@ -254,7 +269,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             _write_env_value(service.node, variable_name, next_value)
             _record_mutation(service, variable_name, current_value, next_value)
             old_ram = service.current_ram_mb
-            service.current_ram_mb = _service_ram(service, profiles)
+            service.current_ram_mb = _service_ram(service, profiles, storage_type)
             service.final_ram_mb = service.current_ram_mb
             service.cpu = _service_cpu(service, profiles)
             m_predicted = sum(item.current_ram_mb for item in contexts)
@@ -286,6 +301,54 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
 
     # Fallback to safety boundaries if we are still over capacity
     if m_gap > 0 or c_gap > 0:
+        if not allow_cgroups:
+            trace.append(
+                "[Safety] Cgroup injection is disabled by the custom profile configuration; "
+                "cannot fit services within host capacity."
+            )
+            optimized_yaml = _dump_yaml(yaml, document)
+            return AnalyzeResponse(
+                status="UNSOLVABLE",
+                optimized_yaml_string=optimized_yaml,
+                optimized_yaml=optimized_yaml,
+                metrics=OptimizationMetrics(
+                    initial_predicted_ram_mb=initial_predicted_ram,
+                    final_predicted_ram_mb=sum(s.final_ram_mb for s in contexts),
+                    ram_margin_mb=effective_free_ram - sum(s.final_ram_mb for s in contexts),
+                    cpu_saturation_pct=(sum(s.cpu for s in contexts) / cpu_budget * 100)
+                    if cpu_budget
+                    else 0.0,
+                ),
+                services=[
+                    ServiceAnalysisResult(
+                        name=service.name,
+                        tier=service.tier,
+                        replicas=service.replicas,
+                        initial_ram_mb=service.initial_ram_mb,
+                        final_ram_mb=service.final_ram_mb,
+                        variables_mutated=service.variables_mutated,
+                        cgroups_injected=service.cgroups_injected,
+                        at_floor=_at_floor(service, profiles, floor_strictness),
+                    )
+                    for service in contexts
+                ],
+                topology=[
+                    ServiceAnalysisResult(
+                        name=service.name,
+                        tier=service.tier,
+                        replicas=service.replicas,
+                        initial_ram_mb=service.initial_ram_mb,
+                        final_ram_mb=service.final_ram_mb,
+                        variables_mutated=service.variables_mutated,
+                        cgroups_injected=service.cgroups_injected,
+                        at_floor=_at_floor(service, profiles, floor_strictness),
+                    )
+                    for service in contexts
+                ],
+                warnings=warnings,
+                execution_trace=trace,
+                trace_log=trace,
+            )
         cgroups_used = _inject_cgroups(contexts, profiles, c_gap, effective_free_ram)
         if cgroups_used:
             m_predicted = sum(service.final_ram_mb for service in contexts)
@@ -328,6 +391,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
                 final_ram_mb=service.final_ram_mb,
                 variables_mutated=service.variables_mutated,
                 cgroups_injected=service.cgroups_injected,
+                at_floor=_at_floor(service, profiles, floor_strictness),
             )
             for service in contexts
         ],
@@ -340,6 +404,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
                 final_ram_mb=service.final_ram_mb,
                 variables_mutated=service.variables_mutated,
                 cgroups_injected=service.cgroups_injected,
+                at_floor=_at_floor(service, profiles, floor_strictness),
             )
             for service in contexts
         ],
@@ -516,7 +581,20 @@ def _host_profile(
     selected_profile: str,
     profiles: dict[str, Any],
     trace: list[str],
+    custom_profile_config: CustomProfileConfig | None = None,
 ) -> dict[str, float]:
+    # If a custom config object is present, bypass the lookup table entirely.
+    if custom_profile_config is not None:
+        trace.append(
+            f"[Profiles] Using custom host profile: "
+            f"ram_safety_buffer={custom_profile_config.ram_safety_buffer}, "
+            f"cpu_threshold_multiplier={custom_profile_config.cpu_threshold_multiplier}."
+        )
+        return {
+            "ram_safety_buffer": custom_profile_config.ram_safety_buffer,
+            "cpu_threshold_multiplier": custom_profile_config.cpu_threshold_multiplier,
+        }
+
     host_profiles = profiles.get("host_profiles", {})
     profile = host_profiles.get(selected_profile) if isinstance(host_profiles, dict) else None
     if (
@@ -573,6 +651,51 @@ def _extract_replicas(service: Any) -> int:
         return max(1, int(replicas))
     except Exception:
         return 1
+
+
+def _extract_xtuning(
+    service: Any,
+    service_name: str,
+    trace: list[str],
+) -> dict[str, Any]:
+    """Parse the optional ``x-tuning`` extension block from a service node.
+
+    Returns a dict suitable for splatting into the ServiceContext constructor.
+    Keys are only included when the corresponding x-tuning sub-key is present
+    and valid, so absent keys fall back to the dataclass field defaults.
+    """
+    result: dict[str, Any] = {}
+    if not isinstance(service, dict):
+        return result
+
+    xtuning = service.get("x-tuning")
+    if not isinstance(xtuning, dict):
+        return result
+
+    # ram_floor_mb — must be a positive number
+    raw_floor = xtuning.get("ram_floor_mb")
+    if _is_json_number(raw_floor) and raw_floor > 0:
+        result["xtuning_ram_floor_mb"] = float(raw_floor)
+        trace.append(
+            f"[x-tuning] Service '{service_name}' overrides RAM floor to "
+            f"{raw_floor} MB via x-tuning.ram_floor_mb."
+        )
+    elif raw_floor is not None:
+        trace.append(
+            f"[x-tuning] Service '{service_name}' has invalid x-tuning.ram_floor_mb "
+            f"({raw_floor!r}); ignoring and using tier default."
+        )
+
+    # never_cgroup — truthy boolean
+    raw_nc = xtuning.get("never_cgroup")
+    if raw_nc is True:
+        result["xtuning_never_cgroup"] = True
+        trace.append(
+            f"[x-tuning] Service '{service_name}' is marked never_cgroup; "
+            "it will be excluded from memory cgroup limits."
+        )
+
+    return result
 
 
 def _classify_service(
@@ -695,19 +818,34 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
-def _recalculate(contexts: list[ServiceContext], profiles: dict[str, Any]) -> None:
+def _recalculate(
+    contexts: list[ServiceContext],
+    profiles: dict[str, Any],
+    storage_type: str = "",
+) -> None:
     for service in contexts:
-        service.current_ram_mb = _service_ram(service, profiles)
+        service.current_ram_mb = _service_ram(service, profiles, storage_type)
         service.final_ram_mb = service.current_ram_mb
         service.cpu = _service_cpu(service, profiles)
 
 
-def _service_ram(service: ServiceContext, profiles: dict[str, Any]) -> float:
+_HDD_MAX_CONNECTIONS_CEIL = 50
+_HDD_MAXMEMORY_CEIL = 50
+
+
+def _service_ram(
+    service: ServiceContext,
+    profiles: dict[str, Any],
+    storage_type: str = "",
+) -> float:
     tier_config = profiles["tiers"][service.tier]
     replicas = service.replicas
+    is_hdd = storage_type == "HDD"
     if service.tier == "database":
         max_connections = _read_env_number(service.node, "max_connections")
         max_connections = max_connections if max_connections is not None else 100
+        if is_hdd:
+            max_connections = min(max_connections, _HDD_MAX_CONNECTIONS_CEIL)
         return (128.0 + (max_connections * 15.0)) * replicas
     if service.tier == "backend_hybrid":
         workers = _read_env_number(service.node, "WORKERS")
@@ -718,6 +856,8 @@ def _service_ram(service: ServiceContext, profiles: dict[str, Any]) -> float:
     if service.tier == "cache":
         maxmemory = _read_env_number(service.node, "maxmemory")
         maxmemory = maxmemory if maxmemory is not None else 256
+        if is_hdd:
+            maxmemory = min(maxmemory, _HDD_MAXMEMORY_CEIL)
         return (16.0 + maxmemory) * replicas
     return tier_config["base_ram_mb"] * replicas
 
@@ -744,9 +884,22 @@ def _service_cpu(service: ServiceContext, profiles: dict[str, Any]) -> float:
     return base_cpu * cpu_scale
 
 
-def _at_floor(service: ServiceContext, profiles: dict[str, Any]) -> bool:
+def _at_floor(
+    service: ServiceContext,
+    profiles: dict[str, Any],
+    floor_strictness: float = 1.0,
+) -> bool:
     floor = profiles["floors"][service.tier]
-    if service.current_ram_mb <= floor["ram_mb"] * service.replicas:
+    # Prefer the per-service x-tuning RAM floor override when present.
+    base_floor_mb = (
+        service.xtuning_ram_floor_mb
+        if service.xtuning_ram_floor_mb is not None
+        else floor["ram_mb"]
+    )
+    # Apply floor_strictness as a multiplier on the raw floor target.
+    # A value of 1.0 (the default) leaves the floor completely unchanged.
+    effective_floor_mb = base_floor_mb * floor_strictness
+    if service.current_ram_mb <= effective_floor_mb * service.replicas:
         return True
     for variable_name, floor_value in floor["variables"].items():
         current_value = _read_env_number(service.node, variable_name)
@@ -772,14 +925,46 @@ def _inject_cgroups(
     c_gap: float,
     effective_free_ram: float,
 ) -> bool:
-    injected = False
     active_footprint = sum(service.current_ram_mb for service in contexts)
     overflow = max(0.0, active_footprint - effective_free_ram)
 
-    for service in contexts:
-        floor_ram = profiles["floors"][service.tier]["ram_mb"]
+    # Partition services into those eligible for cgroup limits and those exempt.
+    exempt = [s for s in contexts if s.xtuning_never_cgroup]
+    eligible = [s for s in contexts if not s.xtuning_never_cgroup]
+
+    eligible_footprint = sum(s.current_ram_mb for s in eligible)
+
+    # Pre-flight: verify eligible services can absorb the full overflow before
+    # writing a single byte to the YAML, so we never apply partial limits.
+    if overflow > 0 and eligible:
+        total_eligible_headroom = sum(
+            max(
+                0.0,
+                s.current_ram_mb - (
+                    s.xtuning_ram_floor_mb
+                    if s.xtuning_ram_floor_mb is not None
+                    else profiles["floors"][s.tier]["ram_mb"]
+                ) * s.replicas,
+            )
+            for s in eligible
+        )
+        if total_eligible_headroom < overflow:
+            # Eligible services cannot absorb the full overflow without pushing
+            # at least one of them below its floor — refuse to apply partial limits.
+            return False
+
+    injected = False
+    for service in eligible:
+        floor_ram = (
+            service.xtuning_ram_floor_mb
+            if service.xtuning_ram_floor_mb is not None
+            else profiles["floors"][service.tier]["ram_mb"]
+        )
+        # Redistribute overflow proportionally across eligible services only.
         reduction_share = (
-            overflow * (service.current_ram_mb / active_footprint) if active_footprint else 0.0
+            overflow * (service.current_ram_mb / eligible_footprint)
+            if eligible_footprint
+            else 0.0
         )
         budgeted_service_ram = service.current_ram_mb - reduction_share
         limit_mb = max(budgeted_service_ram / service.replicas, floor_ram)
@@ -790,6 +975,16 @@ def _inject_cgroups(
             _write_resource_limit(service.node, "cpus", round(cpu_limit, 2))
         service.cgroups_injected = True
         injected = True
+
+    # Exempt services keep their current RAM unchanged but still receive a CPU
+    # limit when the CPU budget is blown, honouring the intent of never_cgroup
+    # (no memory cap) while still participating in CPU governance.
+    for service in exempt:
+        service.final_ram_mb = service.current_ram_mb
+        if c_gap > 0:
+            cpu_limit = max(0.05, service.cpu / service.replicas)
+            _write_resource_limit(service.node, "cpus", round(cpu_limit, 2))
+
     return injected
 
 
@@ -798,6 +993,111 @@ def _write_resource_limit(service: Any, key: str, value: Any) -> None:
     resources = deploy.setdefault("resources", CommentedMap())
     limits = resources.setdefault("limits", CommentedMap())
     limits[key] = value
+
+
+def _check_port_conflicts(document: Any, warnings: list[str]) -> None:
+    """Scan every service's ports block and emit warnings for host-port conflicts.
+
+    Two conditions constitute a conflict:
+    - The same (host_interface, host_port) tuple is claimed by more than one service.
+    - A specific-interface binding shares its port number with an existing "0.0.0.0"
+      wildcard binding that belongs to a different service (and vice-versa).
+    """
+    if not isinstance(document, dict):
+        return
+
+    raw_services: Any = document.get("services", document)
+    if not isinstance(raw_services, dict):
+        return
+
+    # Map (host_interface, host_port) -> first service name that claimed it.
+    seen: dict[tuple[str, str], str] = {}
+
+    for service_name, service_node in raw_services.items():
+        if not isinstance(service_node, dict):
+            continue
+
+        ports_block = service_node.get("ports")
+        if not ports_block or not isinstance(ports_block, list):
+            continue
+
+        for entry in ports_block:
+            bindings = _normalise_port_entry(entry)
+            for iface, host_port in bindings:
+                key = (iface, host_port)
+
+                # --- Exact-duplicate check ---
+                if key in seen:
+                    if seen[key] != service_name:
+                        warnings.append(
+                            f"[Ports] Host port conflict on {iface}:{host_port} "
+                            f"between services '{seen[key]}' and '{service_name}'."
+                        )
+                    # Already recorded; no need to overwrite.
+                    continue
+
+                # --- Wildcard vs specific-interface cross-check ---
+                if iface == "0.0.0.0":
+                    # A wildcard binding collides with any specific binding on the
+                    # same port that is already registered from a *different* service.
+                    for (existing_iface, existing_port), owner in seen.items():
+                        if existing_port == host_port and owner != service_name:
+                            warnings.append(
+                                f"[Ports] Host port conflict on port {host_port}: "
+                                f"wildcard binding by '{service_name}' conflicts with "
+                                f"specific binding {existing_iface}:{host_port} "
+                                f"by '{owner}'."
+                            )
+                else:
+                    # A specific-interface binding collides with an existing wildcard
+                    # (0.0.0.0) on the same port from a different service.
+                    wildcard_key = ("0.0.0.0", host_port)
+                    if wildcard_key in seen and seen[wildcard_key] != service_name:
+                        warnings.append(
+                            f"[Ports] Host port conflict on port {host_port}: "
+                            f"specific binding {iface}:{host_port} by '{service_name}' "
+                            f"conflicts with wildcard binding by '{seen[wildcard_key]}'."
+                        )
+
+                seen[key] = service_name
+
+
+def _normalise_port_entry(entry: Any) -> list[tuple[str, str]]:
+    """Return a list of (host_interface, host_port) tuples for a single port entry.
+
+    Handles:
+    - Short string syntax: "8080:80", "127.0.0.1:8080:80", bare "80"
+    - Long object syntax: {published: <host_port>, target: <container_port>}
+    """
+    DEFAULT_IFACE = "0.0.0.0"
+
+    if isinstance(entry, dict):
+        # Long syntax — only the published (host) side matters for conflict detection.
+        published = entry.get("published")
+        if published is None:
+            return []
+        return [(DEFAULT_IFACE, str(published))]
+
+    if not isinstance(entry, (str, int)):
+        return []
+
+    raw = str(entry).strip()
+    if not raw:
+        return []
+
+    # Split on "/" to drop any protocol suffix (e.g. "8080:80/tcp").
+    raw = raw.split("/")[0]
+
+    parts = raw.split(":")
+    if len(parts) == 1:
+        # Bare container port with no host binding — no host port to conflict.
+        return []
+    if len(parts) == 2:
+        # "host_port:container_port" — no interface specified.
+        return [(DEFAULT_IFACE, parts[0])]
+    # "interface:host_port:container_port"
+    iface = parts[0] if parts[0] else DEFAULT_IFACE
+    return [(iface, parts[1])]
 
 
 def _dump_yaml(yaml: YAML, document: Any) -> str:
@@ -833,6 +1133,7 @@ def _response(
                 final_ram_mb=service.final_ram_mb,
                 variables_mutated=service.variables_mutated,
                 cgroups_injected=service.cgroups_injected,
+                at_floor=False,
             )
             for service in service_contexts
         ],
@@ -845,6 +1146,7 @@ def _response(
                 final_ram_mb=service.final_ram_mb,
                 variables_mutated=service.variables_mutated,
                 cgroups_injected=service.cgroups_injected,
+                at_floor=False,
             )
             for service in service_contexts
         ],

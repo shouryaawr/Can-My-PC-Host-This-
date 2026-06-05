@@ -1,4 +1,4 @@
-import { FileCode2, Wand2 } from "lucide-react";
+import { Check, Clipboard, Download, FileCode2, Wand2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 /* ─────────────────────────── diff logic ────────────────────────── */
@@ -193,8 +193,16 @@ function SplitPaneRow({ hunk, lineNo, side }) {
 
 /* ── Main export ─────────────────────────────────────────────────── */
 
-export default function DiffViewer({ originalYaml = "", optimizedYaml = "" }) {
+export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDownload, sourceFilename }) {
   const [diffViewMode, setDiffViewMode] = useState("unified");
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(optimizedYaml).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
 
   const hunks = useMemo(
     () => computeDiff(originalYaml, optimizedYaml),
@@ -221,25 +229,55 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "" }) {
           <DiffStats hunks={hunks} />
         </div>
 
-        {/* Right: Unified / Side-by-Side toggle */}
-        <div className="inline-flex rounded-md border border-slate-700 bg-zinc-950/80 p-0.5">
-          {[
-            { key: "unified",  label: "Unified"      },
-            { key: "split",    label: "Side-by-Side" },
-          ].map(({ key, label }) => (
+        {/* Right: Copy button + Unified / Side-by-Side toggle */}
+        <div className="flex items-center gap-2">
+          {/* Copy manifest button */}
+          <button
+            type="button"
+            onClick={handleCopy}
+            className={`inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-zinc-950/80 px-2.5 py-1 text-[0.68rem] font-medium text-zinc-400 transition hover:border-slate-600 hover:text-zinc-200 ${
+              copied ? "opacity-50" : "opacity-100"
+            }`}
+          >
+            {copied
+              ? <Check className="h-3 w-3 text-emerald-400" />
+              : <Clipboard className="h-3 w-3" />}
+            Copy manifest
+          </button>
+
+          {/* Download optimized YAML button */}
+          {onDownload && (
             <button
-              key={key}
               type="button"
-              onClick={() => setDiffViewMode(key)}
-              className={`rounded px-2.5 py-1 text-[0.68rem] font-medium transition ${
-                diffViewMode === key
-                  ? "bg-slate-700 text-zinc-100"
-                  : "text-zinc-500 hover:text-zinc-200"
-              }`}
+              onClick={onDownload}
+              title={sourceFilename ? `Download ${sourceFilename.replace(/\.ya?ml$/i, "")}.optimized.yml` : "Download optimized YAML"}
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-zinc-950/80 px-2.5 py-1 text-[0.68rem] font-medium text-zinc-400 transition hover:border-slate-600 hover:text-zinc-200"
             >
-              {label}
+              <Download className="h-3 w-3" />
+              Download
             </button>
-          ))}
+          )}
+
+          {/* Unified / Side-by-Side toggle */}
+          <div className="inline-flex rounded-md border border-slate-700 bg-zinc-950/80 p-0.5">
+            {[
+              { key: "unified",  label: "Unified"      },
+              { key: "split",    label: "Side-by-Side" },
+            ].map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setDiffViewMode(key)}
+                className={`rounded px-2.5 py-1 text-[0.68rem] font-medium transition ${
+                  diffViewMode === key
+                    ? "bg-slate-700 text-zinc-100"
+                    : "text-zinc-500 hover:text-zinc-200"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

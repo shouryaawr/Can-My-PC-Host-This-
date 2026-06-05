@@ -1,4 +1,4 @@
-from typing import Dict, List, Literal
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,10 +10,19 @@ class HostHardware(BaseModel):
     storage_type: Literal["SSD", "HDD", "UNKNOWN"]
 
 
+class CustomProfileConfig(BaseModel):
+    ram_safety_buffer: float
+    cpu_threshold_multiplier: float
+    max_iterations: Optional[int] = Field(default=50, ge=1, le=100)
+    allow_cgroups: Optional[bool] = True
+    floor_strictness: Optional[float] = Field(default=1.0, ge=0.5, le=1.5)
+
+
 class AnalyzeRequest(BaseModel):
     yaml_string: str
-    selected_profile: Literal["silent_running", "max_performance", "background_dev"]
+    selected_profile: Literal["silent_running", "max_performance", "background_dev", "custom"]
     host_hardware: HostHardware
+    custom_profile_config: Optional[CustomProfileConfig] = None
 
 
 class FetchManifestRequest(BaseModel):
@@ -35,6 +44,7 @@ class ServiceAnalysisResult(BaseModel):
     final_ram_mb: float
     variables_mutated: Dict[str, MutatedVariableDetail]
     cgroups_injected: bool
+    at_floor: bool
 
 
 class OptimizationMetrics(BaseModel):
