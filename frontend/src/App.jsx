@@ -25,7 +25,7 @@ import DiffViewer from "./components/DiffViewer.jsx";
 import Topology from "./components/Topology.jsx";
 import TraceLog from "./components/TraceLog.jsx";
 
-/* ─────────────────────────── constants ─────────────────────────── */
+
 
 const BOILERPLATE_YAML = `version: "3.9"
 services:
@@ -106,7 +106,7 @@ const DEFAULT_HARDWARE = {
   storage_type: "SSD",
 };
 
-/* ─────────────────────────── helpers ───────────────────────────── */
+
 
 function formatMetric(value, suffix = "MB") {
   const number = Number(value || 0);
@@ -127,7 +127,7 @@ function parseRamInputValue(value, unit) {
   return Math.round(unit === "GB" ? number * 1000 : number);
 }
 
-/* ─────────────────────────── small components ──────────────────── */
+
 
 function MetricCard({ icon: Icon, label, value, detail, tone = "text-zinc-100", track }) {
   return (
@@ -517,7 +517,7 @@ function ConfigurationCards({
   );
 }
 
-/* ─────────────────────── Import / Load Modal ────────────────────── */
+
 
 function ImportModal({ onClose, onLoad }) {
   const fileInputRef = useRef(null);
@@ -592,7 +592,7 @@ function ImportModal({ onClose, onLoad }) {
   );
 }
 
-/* ─────────────────────────── App ───────────────────────────────── */
+
 
 export default function App() {
   const [yamlString, setYamlString] = useState("");
@@ -621,7 +621,7 @@ export default function App() {
     floor_strictness: 1.0,
   });
 
-  /* ── load live hardware on mount ── */
+
   const loadHardware = useCallback(async () => {
     try {
       const response = await fetch("/api/v1/hardware");
@@ -646,7 +646,7 @@ export default function App() {
     loadHardware();
   }, [loadHardware]);
 
-  /* ── derived ── */
+
   const statusClass = apiResponse
     ? STATUS_CLASSES[apiResponse.status] || STATUS_CLASSES.INVALID_MANIFEST
     : "border-zinc-700 bg-zinc-900 text-zinc-300";
@@ -661,7 +661,7 @@ export default function App() {
     [apiResponse],
   );
 
-  /* ── callbacks ── */
+
   const handleLoadYaml = useCallback((yaml) => {
     setYamlString(yaml);
     setApiResponse(null);
@@ -805,7 +805,7 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
-  /* ── render ── */
+
   return (
     <>
       {showImport && (
@@ -845,7 +845,7 @@ export default function App() {
       <main className="app-shell-bg min-h-screen bg-zinc-950 px-4 py-6 text-zinc-100 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-7xl">
 
-          {/* ── Header ── */}
+
           <header className="mb-6 border-b border-zinc-800 pb-5">
             <div>
               <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">
@@ -857,10 +857,10 @@ export default function App() {
             </div>
           </header>
 
-          {/* ── Two-column layout ── */}
+
           <div className="grid gap-5 xl:grid-cols-12">
 
-            {/* ── LEFT PANEL ── */}
+
             <aside className="space-y-4 xl:col-span-4">
 
               {/* YAML Workspace (dominant) */}
@@ -1047,7 +1047,7 @@ export default function App() {
               ) : null}
             </aside>
 
-            {/* ── RIGHT PANEL ── */}
+
             <section className="space-y-4 xl:col-span-8">
               {isLoading ? <LoadingDisplay /> : null}
               {!isLoading && !apiResponse ? (

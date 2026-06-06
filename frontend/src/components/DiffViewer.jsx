@@ -60,7 +60,7 @@ function resolveAnnotationBadge(line, isHddHost) {
   return null;
 }
 
-/* ─────────────────────────── annotation badge UI ───────────────────────── */
+
 
 /**
  * AnnotationBadge — compact, muted grey inline chip.
@@ -78,7 +78,7 @@ function AnnotationBadge({ label }) {
   );
 }
 
-/* ─────────────────────────── diff logic ────────────────────────── */
+
 
 /**
  * Very lightweight line-level diff.
@@ -124,7 +124,7 @@ function computeDiff(original = "", optimized = "") {
   return result;
 }
 
-/* ─────────────────────────── components ────────────────────────── */
+
 
 const LINE_STYLES = {
   same: {
@@ -288,7 +288,7 @@ function SplitPaneRow({ hunk, lineNo, side, badge }) {
   );
 }
 
-/* ── Main export ─────────────────────────────────────────────────── */
+
 
 export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDownload, sourceFilename, isHddHost = false }) {
   const [diffViewMode, setDiffViewMode] = useState("unified");
@@ -378,7 +378,7 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
         </div>
       </div>
 
-      {/* ── Unified diff table ── */}
+
       {diffViewMode === "unified" && (
         <div className="overflow-auto rounded-lg border border-zinc-800 bg-zinc-950">
           <table className="min-w-full border-collapse">
@@ -415,7 +415,7 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
         </div>
       )}
 
-      {/* ── Side-by-Side split view ── */}
+
       {diffViewMode === "split" && (() => {
         let leftNo  = 0;
         let rightNo = 0;

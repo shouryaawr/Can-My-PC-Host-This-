@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ClipboardList } from "lucide-react";
 
-/* ── Profile label formatter ── */
+
 function formatProfileLabel(raw) {
   const str = typeof raw === "string" && raw.trim() ? raw : "default";
   return str
@@ -10,7 +10,7 @@ function formatProfileLabel(raw) {
     .join(" ");
 }
 
-/* ── prefix → uppercase canonical token map (array, order-sensitive) ── */
+
 const PREFIX_MAP = [
   { from: /^\[Manifest\]/,   to: "[MANIFEST]"     },
   { from: /^\[Hardware\]/,   to: "[HARDWARE]"     },

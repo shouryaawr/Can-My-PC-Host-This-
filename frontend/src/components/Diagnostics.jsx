@@ -103,7 +103,7 @@ const SEVERITY_BANNER_STYLE = {
   },
 };
 
-/* ─── zone classification (per-service — unchanged) ─── */
+
 
 function classifyService(service) {
   if (service.cgroups_injected) return "critical";
@@ -208,7 +208,7 @@ function generateServiceDescription(service) {
   return `${formattedList} reduced to optimize host resource constraints.`;
 }
 
-/* ─── sub-components ─── */
+
 
 /**
  * SeverityBadge — compact pill with a coloured dot signal token.
@@ -307,7 +307,7 @@ function ServiceRow({ service }) {
   );
 }
 
-/* ─── main component ─── */
+
 
 export default function Diagnostics({ response }) {
   if (!response) return null;
@@ -315,7 +315,7 @@ export default function Diagnostics({ response }) {
   const services    = response.services ?? [];
   const ramMarginMb = response.metrics?.ram_margin_mb ?? 0;
 
-  // ── Single initialization block — all downstream UI reads from `severity` ──
+
   const severity = computeSeverity(ramMarginMb, services);
 
   const criticalCount = services.filter((s) => classifyService(s) === "critical").length;
@@ -324,7 +324,7 @@ export default function Diagnostics({ response }) {
 
   return (
     <div className="space-y-4">
-      {/* ── Header: severity badge + single advisory banner ── */}
+
       <SeverityBadge severity={severity} />
       <AdvisoryBanner
         severity={severity}
@@ -332,7 +332,7 @@ export default function Diagnostics({ response }) {
         freeRamMb={response.metrics?.free_ram_mb ?? 0}
       />
 
-      {/* ── Summary counters ── */}
+
       <div className="grid grid-cols-3 gap-2 text-center text-xs">
         {[
           { count: criticalCount, label: "Critical", cls: "text-red-500"   },
@@ -349,7 +349,7 @@ export default function Diagnostics({ response }) {
         ))}
       </div>
 
-      {/* ── Per-service breakdown ── */}
+
       {services.length > 0 ? (
         <ul className="space-y-2">
           {services.map((service) => (

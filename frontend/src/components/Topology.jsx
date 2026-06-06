@@ -28,9 +28,7 @@ const MUTATION_CONFIG = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// Column / tier configuration
-// ---------------------------------------------------------------------------
+
 const COLUMN_DEFINITIONS = [
   {
     title: "Ingress & Routing",
@@ -88,9 +86,7 @@ const TIER_DISPLAY_MAP = {
   cache:                "Cache",
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+
 function formatRam(value) {
   return `${Math.round(Number(value || 0))}MB`;
 }
@@ -114,9 +110,7 @@ function sortMutationsByPriority(variables_mutated = {}) {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Sub-component: in-flow accordion for subordinate mutations
-// ---------------------------------------------------------------------------
+
 function SubordinateAccordion({ mutations }) {
   const [open, setOpen] = useState(false);
 
@@ -176,9 +170,7 @@ function SubordinateAccordion({ mutations }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// ServiceCard
-// ---------------------------------------------------------------------------
+
 function ServiceCard({ service }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -190,7 +182,7 @@ function ServiceCard({ service }) {
   const compressionPercent = getCompressionPercent(service);
   const barClass = isMutated ? "bg-zinc-500" : "bg-green-500";
 
-  // ── Mutation analysis ────────────────────────────────────────────────────
+
   const rawMutations = service.variables_mutated ?? {};
   const hasMutations = Object.keys(rawMutations).length > 0;
 
@@ -204,7 +196,7 @@ function ServiceCard({ service }) {
   // Subordinate = everything except the dominant
   const subordinateMutations = sortedMutations.slice(1);
 
-  // ── Derived display strings ──────────────────────────────────────────────
+
   const changeLabel = isMutated
     ? `${formatRam(initialRam)} → ${formatRam(finalRam)}`
     : `${formatRam(finalRam)} (Optimal)`;
@@ -215,7 +207,7 @@ function ServiceCard({ service }) {
   return (
     <article className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950/80 shadow-sm shadow-black/20">
       <div className="space-y-4 p-3">
-        {/* ── Header row ── */}
+
         <button
           type="button"
           className="flex w-full items-start gap-3 text-left"
@@ -246,7 +238,7 @@ function ServiceCard({ service }) {
           )}
         </button>
 
-        {/* ── Memory bar (always rendered) ── */}
+
         <div>
           <div className="mb-2 flex items-center justify-between font-mono text-xs">
             <span className="text-zinc-500">memory</span>
@@ -307,7 +299,7 @@ function ServiceCard({ service }) {
         </div>
       )}
 
-      {/* ── CGroups footer (always rendered when active) ── */}
+
       {service.cgroups_injected ? (
         <footer className="flex items-center gap-2 border-t border-zinc-700 bg-zinc-800/50 px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
           <ShieldAlert className="h-3.5 w-3.5" aria-hidden="true" />
@@ -318,9 +310,7 @@ function ServiceCard({ service }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Topology (page-level layout)
-// ---------------------------------------------------------------------------
+
 export default function Topology({ services = [] }) {
   const serviceList = Array.isArray(services) ? services : [];
 
