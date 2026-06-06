@@ -266,15 +266,11 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
         m_budget = effective_free_ram - m_predicted
         c_budget = cpu_budget - c_predicted
         trace.append(
-            "[Baseline] Services need "
-            f"{round(m_predicted, 1)}MB RAM and {round(c_predicted, 2)} CPU; "
-            f"Available Safety Margin is {round(m_budget, 1)}MB RAM and {round(c_budget, 2)} CPU."
+            f"[BASELINE] Services fit baseline. Available Safety Margin: {round(m_budget, 1)} MB RAM and {round(c_budget, 2)} CPU."
         )
     else:
         trace.append(
-            "[Baseline] Services need "
-            f"{round(m_predicted, 1)}MB RAM and {round(c_predicted, 2)} CPU; "
-            f"host gaps are {round(m_gap, 1)}MB RAM and {round(c_gap, 2)} CPU."
+            f"[BASELINE] Host Resource Deficit: {round(-m_gap, 1)} MB RAM and {round(-c_gap, 2)} CPU. Step-down downscaling sequence engaged."
         )
 
                                                                                
