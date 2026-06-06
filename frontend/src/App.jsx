@@ -26,6 +26,13 @@ import TraceLog from "./components/TraceLog.jsx";
 
 
 
+const rawApiUrl = import.meta.env.VITE_API_URL || "";
+const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+
+const API_BASE_URL = !isLocal && rawApiUrl.includes("localhost")
+  ? "" 
+  : rawApiUrl.replace(/\/$/, "");
+
 const BOILERPLATE_YAML = `version: "3.9"
 services:
   frontend:
