@@ -634,6 +634,7 @@ export default function App() {
         free_ram_mb:  Math.round(freeGb  * 1000),
       });
       setHardwareSource("system");
+    } catch {
       // silently fail hardware detection
     }
   }, []);
