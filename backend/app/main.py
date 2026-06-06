@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import socket
@@ -144,6 +145,45 @@ def fetch_manifest(request: FetchManifestRequest) -> dict[str, str]:
                 ) from error
 
     branch_msg = parsed_branch if parsed_branch else "main/master"
+    
+                                                                       
+    for test_branch in branches_to_test:
+        tree_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{test_branch}?recursive=1"
+        try:
+            req = urllib.request.Request(
+                tree_url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            )
+            with urllib.request.urlopen(req, timeout=10.0) as response:
+                tree_data = json.loads(response.read().decode("utf-8"))
+                
+                valid_paths = [
+                    item["path"] for item in tree_data.get("tree", [])
+                    if item["type"] == "blob" and item["path"].lower().endswith(("compose.yaml", "docker-compose.yml", "compose.yml", "docker-compose.yaml"))
+                ]
+                
+                if len(valid_paths) == 1:
+                    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{test_branch}/{valid_paths[0]}"
+                    req2 = urllib.request.Request(
+                        raw_url,
+                        headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                    )
+                    with urllib.request.urlopen(req2, timeout=10.0) as res2:
+                        yaml_string = res2.read().decode("utf-8")
+                        return {
+                            "yaml_string": yaml_string,
+                            "branch": test_branch,
+                            "manifest_path": valid_paths[0]
+                        }
+                elif len(valid_paths) > 1:
+                    return {
+                        "multiple_manifests": json.dumps(valid_paths),
+                        "branch": test_branch,
+                        "manifest_path": ""
+                    }
+        except Exception:
+            continue
+
     raise HTTPException(
         status_code=404,
         detail=f"No file found at '{request.manifest_path}' in {owner}/{repo} on branch '{branch_msg}'.",

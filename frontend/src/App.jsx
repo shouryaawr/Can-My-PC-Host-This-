@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { parseDocument } from "yaml";
 import {
   Activity,
   Cpu,
@@ -18,21 +19,15 @@ import {
   Upload,
   X,
 } from "lucide-react";
-
 import Diagnostics from "./components/Diagnostics.jsx";
 import DiffViewer from "./components/DiffViewer.jsx";
 import Topology from "./components/Topology.jsx";
 import TraceLog from "./components/TraceLog.jsx";
-
-
-
 const rawApiUrl = import.meta.env.VITE_API_URL || "";
 const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-
 const API_BASE_URL = !isLocal && rawApiUrl.includes("localhost")
   ? "" 
   : rawApiUrl.replace(/\/$/, "");
-
 const BOILERPLATE_YAML = `version: "3.9"
 services:
   frontend:
@@ -54,7 +49,6 @@ services:
     environment:
       maxmemory: 128
 `;
-
 const PROFILE_OPTIONS = [
   {
     key: "silent_running",
@@ -81,14 +75,12 @@ const PROFILE_OPTIONS = [
       "Set your own RAM safety buffer and CPU threshold manually. Full control over the optimization boundaries.",
   },
 ];
-
 const TAB_OPTIONS = [
   { key: "diff",        label: "Diff Viewer",   icon: GitCompareArrows },
   { key: "topology",   label: "Node Topology",  icon: Network },
   { key: "trace",      label: "Rule Trace",     icon: ScrollText },
   { key: "diagnostics",label: "Diagnostics",    icon: ShieldAlert },
 ];
-
 const STATUS_CLASSES = {
   FULLY_SOLVED: "border-green-500/30 bg-green-500/10 text-green-500",
   DEGRADED_SAFE: "border-zinc-600 bg-zinc-800/60 text-zinc-300",
@@ -96,7 +88,6 @@ const STATUS_CLASSES = {
   INVALID_MANIFEST: "border-red-500/30 bg-red-500/10 text-red-500",
   UNSUPPORTED_ORCHESTRATOR: "border-amber-500/30 bg-amber-500/10 text-amber-400",
 };
-
 const STATUS_LABELS = {
   FULLY_SOLVED: "Optimal Allocation",
   DEGRADED_SAFE: "Degraded — Safe",
@@ -104,21 +95,16 @@ const STATUS_LABELS = {
   INVALID_MANIFEST: "Invalid Manifest",
   UNSUPPORTED_ORCHESTRATOR: "Unsupported Orchestrator",
 };
-
 const DEFAULT_HARDWARE = {
   total_ram_mb: 8192,
   free_ram_mb: 6144,
   cpu_cores: 4,
   storage_type: "SSD",
 };
-
-
-
 function formatMetric(value, suffix = "MB") {
   const number = Number(value || 0);
   return `${Math.round(number).toLocaleString()} ${suffix}`;
 }
-
 function formatRamInputValue(value, unit) {
   const number = Number(value || 0);
   if (unit === "GB") {
@@ -126,15 +112,11 @@ function formatRamInputValue(value, unit) {
   }
   return Math.round(number);
 }
-
 function parseRamInputValue(value, unit) {
   const number = Number(value);
   if (!Number.isFinite(number)) return 0;
   return Math.round(unit === "GB" ? number * 1000 : number);
 }
-
-
-
 function MetricCard({ icon: Icon, label, value, detail, tone = "text-zinc-100", track }) {
   return (
     <section className="rounded-lg border border-zinc-800 bg-zinc-900/70 p-4">
@@ -148,7 +130,6 @@ function MetricCard({ icon: Icon, label, value, detail, tone = "text-zinc-100", 
     </section>
   );
 }
-
 function NumberField({ label, value, onChange, min = 0, step = 1 }) {
   return (
     <label className="block">
@@ -164,7 +145,6 @@ function NumberField({ label, value, onChange, min = 0, step = 1 }) {
     </label>
   );
 }
-
 function LoadingDisplay() {
   return (
     <section className="flex min-h-[32rem] items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900/50 p-8">
@@ -175,7 +155,6 @@ function LoadingDisplay() {
     </section>
   );
 }
-
 function HostHardwareCard({
   hardwareData,
   setHardwareData,
@@ -189,7 +168,6 @@ function HostHardwareCard({
     setHardwareSource("custom");
     setHardwareData((current) => ({ ...current, [field]: value }));
   }
-
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -270,7 +248,6 @@ function HostHardwareCard({
     </section>
   );
 }
-
 function OperationalProfileCard({ activeProfile, setActiveProfile, customConfig, setCustomConfig }) {
   return (
     <section className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
@@ -289,10 +266,10 @@ function OperationalProfileCard({ activeProfile, setActiveProfile, customConfig,
             >
               {profile.label}
             </button>
-            {/* Tooltip */}
+            {}
             <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-64 -translate-x-1/2 rounded-lg border border-zinc-700 bg-zinc-800 p-3 text-xs text-zinc-400 opacity-0 transition-opacity duration-150 group-hover/tip:opacity-100">
               {profile.description}
-              {/* Downward caret */}
+              {}
               <div
                 className="absolute left-1/2 top-full -translate-x-1/2"
                 style={{
@@ -307,15 +284,13 @@ function OperationalProfileCard({ activeProfile, setActiveProfile, customConfig,
           </div>
         ))}
       </div>
-
-      {/* Custom sliders — revealed only when custom is active */}
+      {}
       {activeProfile === "custom" && (
         <div className="mt-4 space-y-4 rounded-lg border border-zinc-700 bg-zinc-800/40 p-3">
           <p className="text-[0.68rem] font-medium uppercase tracking-wide text-zinc-500">
             Custom Tuning Parameters
           </p>
-
-          {/* RAM Safety Buffer */}
+          {}
           <label className="block">
             <div className="mb-1.5 flex items-center justify-between">
               <span className="text-xs font-medium text-zinc-400">RAM Safety Buffer</span>
@@ -348,8 +323,7 @@ function OperationalProfileCard({ activeProfile, setActiveProfile, customConfig,
               <span>0.00</span><span>1.00</span>
             </div>
           </label>
-
-          {/* CPU Threshold Multiplier */}
+          {}
           <label className="block">
             <div className="mb-1.5 flex items-center justify-between">
               <span className="text-xs font-medium text-zinc-400">CPU Threshold Multiplier</span>
@@ -382,8 +356,7 @@ function OperationalProfileCard({ activeProfile, setActiveProfile, customConfig,
               <span>0.5×</span><span>2.0×</span>
             </div>
           </label>
-
-          {/* Max Loop Iterations */}
+          {}
           <div className="block">
             <div className="mb-1.5 flex items-center justify-between">
               <span className="text-xs font-medium text-zinc-400">Max Loop Iterations</span>
@@ -410,8 +383,7 @@ function OperationalProfileCard({ activeProfile, setActiveProfile, customConfig,
               processing time.
             </p>
           </div>
-
-          {/* Allow Cgroups Fallback */}
+          {}
           <div className="block">
             <label
               htmlFor="custom-allow-cgroups"
@@ -449,8 +421,7 @@ function OperationalProfileCard({ activeProfile, setActiveProfile, customConfig,
               </div>
             </label>
           </div>
-
-          {/* RAM Floor Strictness */}
+          {}
           <label className="block">
             <div className="mb-1.5 flex items-center justify-between">
               <span className="text-xs font-medium text-zinc-400">RAM Floor Strictness</span>
@@ -488,7 +459,6 @@ function OperationalProfileCard({ activeProfile, setActiveProfile, customConfig,
     </section>
   );
 }
-
 function ConfigurationCards({
   hardwareData,
   setHardwareData,
@@ -522,12 +492,8 @@ function ConfigurationCards({
     </div>
   );
 }
-
-
-
 function ImportModal({ onClose, onLoad }) {
   const fileInputRef = useRef(null);
-
   function handleFile(event) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -538,8 +504,6 @@ function ImportModal({ onClose, onLoad }) {
     };
     reader.readAsText(file);
   }
-
-  // Close on Escape
   useEffect(() => {
     function handleKey(e) {
       if (e.key === "Escape") onClose();
@@ -547,14 +511,13 @@ function ImportModal({ onClose, onLoad }) {
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [onClose]);
-
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/80 backdrop-blur-sm"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div className="relative mx-4 w-full max-w-xl rounded-2xl border border-zinc-700 bg-zinc-900 p-6 shadow-2xl">
-        {/* Header */}
+        {}
         <div className="mb-5 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Upload className="h-5 w-5 text-zinc-400" aria-hidden="true" />
@@ -569,8 +532,7 @@ function ImportModal({ onClose, onLoad }) {
             <X className="h-4 w-4" />
           </button>
         </div>
-
-        {/* File Upload */}
+        {}
         <div
           className="flex cursor-pointer flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-zinc-700 bg-zinc-950/50 px-6 py-8 transition hover:border-zinc-600 hover:bg-zinc-950"
           onClick={() => fileInputRef.current?.click()}
@@ -597,9 +559,6 @@ function ImportModal({ onClose, onLoad }) {
     </div>
   );
 }
-
-
-
 export default function App() {
   const [yamlString, setYamlString] = useState("");
   const [activeProfile, setActiveProfile] = useState("silent_running");
@@ -618,6 +577,8 @@ export default function App() {
   const [sourceFilename, setSourceFilename] = useState("docker-compose.yml");
   const [manifestPath, setManifestPath] = useState("compose.yaml");
   const [show404Input, setShow404Input] = useState(false);
+  const [availableManifests, setAvailableManifests] = useState([]);
+  const [selectedBranch, setSelectedBranch] = useState("");
   const [customConfig, setCustomConfig] = useState({
     ram_safety_buffer: 0.75,
     cpu_threshold_multiplier: 1.0,
@@ -625,13 +586,10 @@ export default function App() {
     allow_cgroups: true,
     floor_strictness: 1.0,
   });
-
-
   const loadHardware = useCallback(() => {
     const cpuCores   = navigator.hardwareConcurrency || DEFAULT_HARDWARE.cpu_cores;
     const totalRamMb = Math.round((navigator.deviceMemory || (DEFAULT_HARDWARE.total_ram_mb / 1000)) * 1000);
     const freeRamMb  = Math.round(totalRamMb * 0.75);
-
     setHardwareData({
       cpu_cores:    cpuCores,
       total_ram_mb: totalRamMb,
@@ -640,16 +598,12 @@ export default function App() {
     });
     setHardwareSource("system");
   }, []);
-
   useEffect(() => {
     loadHardware();
   }, [loadHardware]);
-
-
   const statusClass = apiResponse
     ? STATUS_CLASSES[apiResponse.status] || STATUS_CLASSES.INVALID_MANIFEST
     : "border-zinc-700 bg-zinc-900 text-zinc-300";
-
   const serviceCount = apiResponse?.services?.length || 0;
   const totalReplicas = useMemo(
     () =>
@@ -659,39 +613,32 @@ export default function App() {
       ) || 0,
     [apiResponse],
   );
-
-
   const handleLoadYaml = useCallback((yaml) => {
     setYamlString(yaml);
     setApiResponse(null);
     setAnalysisFailed(false);
   }, []);
-
   const handleLoadYamlFile = useCallback((yaml, filename) => {
     setYamlString(yaml);
     setApiResponse(null);
     setAnalysisFailed(false);
     if (filename) setSourceFilename(filename);
   }, []);
-
   const handleLoadBoilerplate = useCallback(() => {
     handleLoadYaml(BOILERPLATE_YAML);
   }, [handleLoadYaml]);
-
   async function handleGithubFetch(event) {
     event.preventDefault();
     setFetchError(null);
     setShow404Input(false);
     setIsLoading(true);
     let handledError = false;
-
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/fetch-manifest`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo_url: githubUrl, manifest_path: manifestPath }),
       });
-
       if (!response.ok) {
         const errorData = await response.json();
         const detail =
@@ -705,13 +652,19 @@ export default function App() {
         handledError = true;
         throw new Error(detail);
       }
-
       const data = await response.json();
+      if (data.multiple_manifests) {
+        setAvailableManifests(JSON.parse(data.multiple_manifests));
+        setSelectedBranch(data.branch);
+        setManifestPath(JSON.parse(data.multiple_manifests)[0]);
+        return;
+      }
       setYamlString(data.yaml_string);
       setSourceFilename(manifestPath);
       setGithubUrl("");
       setManifestPath("compose.yaml");
       setShow404Input(false);
+      setAvailableManifests([]);
       setInputMode("paste");
       setApiResponse(null);
       setAnalysisFailed(false);
@@ -723,20 +676,16 @@ export default function App() {
       setIsLoading(false);
     }
   }
-
   async function runAnalysis() {
     setIsLoading(true);
     setApiResponse(null);
     setAnalysisFailed(false);
-
     try {
-      // Submission serializer: re-encode decimal-MB state → binary MB integers for the backend
       const hardwarePayload = {
         ...hardwareData,
         total_ram_mb: Math.round((hardwareData.total_ram_mb / 1000) * 1024),
         free_ram_mb:  Math.round((hardwareData.free_ram_mb  / 1000) * 1024),
       };
-
       const requestBody = {
         yaml_string: yamlString,
         selected_profile: activeProfile,
@@ -753,16 +702,28 @@ export default function App() {
             }
           : {}),
       };
-
       const response = await fetch(`${API_BASE_URL}/api/v1/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
       });
       const data = await response.json();
+      if (data.patches && data.patches.length > 0) {
+        try {
+          const doc = parseDocument(yamlString);
+          data.patches.forEach(patch => {
+            if (patch.op === "set" || patch.op === "add") {
+              doc.setIn(patch.path, patch.value);
+            } else if (patch.op === "remove") {
+              doc.deleteIn(patch.path);
+            }
+          });
+          data.optimized_yaml_string = String(doc);
+        } catch (e) {
+          console.error("Failed to apply patches to YAML", e);
+        }
+      }
       setApiResponse(data);
-
-      // Diff-first: always open on diff tab after successful analysis
       const failed =
         data.status === "INVALID_MANIFEST" ||
         data.status === "UNSUPPORTED_ORCHESTRATOR" ||
@@ -789,7 +750,6 @@ export default function App() {
       setIsLoading(false);
     }
   }
-
   function handleDownload() {
     const content = apiResponse?.optimized_yaml_string;
     if (!content) return;
@@ -803,14 +763,11 @@ export default function App() {
     anchor.click();
     URL.revokeObjectURL(url);
   }
-
-
   return (
     <>
       {showImport && (
         <ImportModal onClose={() => setShowImport(false)} onLoad={handleLoadYamlFile} />
       )}
-
       {isEditorExpanded && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
           <section className="flex h-[80vh] w-11/12 max-w-5xl flex-col overflow-hidden rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl">
@@ -840,11 +797,8 @@ export default function App() {
           </section>
         </div>
       )}
-
       <main className="app-shell-bg min-h-screen bg-zinc-950 px-4 py-6 text-zinc-100 sm:px-6 lg:px-8">
         <div className="mx-auto max-w-7xl">
-
-
           <header className="mb-6 border-b border-zinc-800 pb-5">
             <div>
               <h1 className="text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">
@@ -855,14 +809,9 @@ export default function App() {
               </p>
             </div>
           </header>
-
-
           <div className="grid gap-5 xl:grid-cols-12">
-
-
             <aside className="space-y-4 xl:col-span-4">
-
-              {/* YAML Workspace (dominant) */}
+              {}
               <section className="rounded-xl border border-zinc-700 bg-zinc-900/70 p-4">
                 <div className="mb-4 flex w-full flex-row items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -898,7 +847,6 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-
                 {inputMode === "github" ? (
                   <form
                     className="rounded-lg border border-zinc-700 bg-zinc-800/70 p-3"
@@ -937,6 +885,37 @@ export default function App() {
                   {fetchError ? (
                     <p className="mt-2 text-xs leading-5 text-red-500">{fetchError}</p>
                   ) : null}
+                  {availableManifests.length > 0 ? (
+                    <div className="mt-3 rounded-lg border border-zinc-700 bg-zinc-900/50 p-3">
+                      <label
+                        htmlFor="manifest-select"
+                        className="mb-1.5 block text-xs font-medium text-zinc-300"
+                      >
+                        Multiple manifests found. Please select one:
+                      </label>
+                      <select
+                        id="manifest-select"
+                        className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 outline-none transition focus:border-zinc-500 focus:ring-1 focus:ring-zinc-500/20"
+                        value={manifestPath}
+                        onChange={(e) => setManifestPath(e.target.value)}
+                        disabled={isLoading}
+                      >
+                        {availableManifests.map((path) => (
+                          <option key={path} value={path}>{path}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="submit"
+                        disabled={isLoading}
+                        className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md border border-zinc-600 bg-zinc-700 px-3 py-2 text-xs font-semibold text-zinc-100 transition hover:bg-zinc-600"
+                      >
+                        {isLoading ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                        ) : null}
+                        Load Selected Manifest
+                      </button>
+                    </div>
+                  ) : null}
                   {show404Input ? (
                     <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
                       <label
@@ -971,7 +950,6 @@ export default function App() {
                   ) : null}
                   </form>
                 ) : null}
-
                 {inputMode === "paste" ? (
                   <>
                     <button
@@ -1002,8 +980,7 @@ export default function App() {
                     </div>
                   </>
                 ) : null}
-
-                {/* Contextual helper — only on failure */}
+                {}
                 {analysisFailed && (
                   <p className="mt-2 text-xs text-zinc-600">
                     Invalid format?{" "}
@@ -1016,8 +993,7 @@ export default function App() {
                     </button>
                   </p>
                 )}
-
-                {/* Primary CTA */}
+                {}
                 <button
                   id="analyze-btn"
                   className="mt-4 flex w-full items-center justify-center rounded-lg bg-zinc-700 px-4 py-3 text-sm font-semibold text-zinc-100 transition hover:bg-zinc-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
@@ -1028,7 +1004,6 @@ export default function App() {
                   Analyze
                 </button>
               </section>
-
               {apiResponse ? (
                 <ConfigurationCards
                   hardwareData={hardwareData}
@@ -1045,8 +1020,6 @@ export default function App() {
                 />
               ) : null}
             </aside>
-
-
             <section className="space-y-4 xl:col-span-8">
               {isLoading ? <LoadingDisplay /> : null}
               {!isLoading && !apiResponse ? (
@@ -1064,10 +1037,9 @@ export default function App() {
                   setCustomConfig={setCustomConfig}
                 />
               ) : null}
-
               {!isLoading && apiResponse ? (
                 <>
-                  {/* Metrics row */}
+                  {}
                   <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
                     <MetricCard
                       icon={Activity}
@@ -1089,14 +1061,9 @@ export default function App() {
                       detail="Predicted after optimization"
                     />
                     {(() => {
-                      // ── Inline severity engine for Post-Allocation Memory card ──
-                      // Boundary expressions are character-for-character identical to
-                      // computeSeverity() in Diagnostics.jsx to prevent layout divergence.
                       const ramMarginMb      = Number(apiResponse.metrics.ram_margin_mb      || 0);
                       const finalPredictedMb = Number(apiResponse.metrics.final_predicted_ram_mb || 0);
                       const freeRamMb        = Number(hardwareData.free_ram_mb || 0);
-
-                      // Severity color derivation
                       const isAtRisk  = ramMarginMb < 64;
                       const isCaution = !isAtRisk && ramMarginMb >= 64 && ramMarginMb <= 256;
                       const toneClass = isAtRisk  ? "text-red-500"
@@ -1105,8 +1072,6 @@ export default function App() {
                       const barColor  = isAtRisk  ? "bg-red-500"
                                       : isCaution ? "bg-amber-400"
                                       :             "bg-green-500";
-
-                      // Dynamic subtext with deficit clamping
                       const stackExceeds  = finalPredictedMb >= freeRamMb;
                       const displayMargin = Math.max(0, Math.round(ramMarginMb));
                       const freeRamRound  = Math.round(freeRamMb);
@@ -1114,12 +1079,9 @@ export default function App() {
                       const subtext       = stackExceeds
                         ? `${subtextBase} (stack exceeds available headroom)`
                         : subtextBase;
-
-                      // Defensive fill-percentage with zero-guard + 100% cap
                       const fillPct = freeRamMb > 0
                         ? Math.min(100, (finalPredictedMb / freeRamMb) * 100)
                         : 0;
-
                       return (
                         <MetricCard
                           icon={HardDrive}
@@ -1140,16 +1102,13 @@ export default function App() {
                       );
                     })()}
                   </div>
-
-
-                  {/* Warnings */}
+                  {}
                   {apiResponse.warnings?.length ? (
                     <section className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-3 text-sm text-zinc-300">
                       {apiResponse.warnings.join(" ")}
                     </section>
                   ) : null}
-
-                  {/* Tab bar */}
+                  {}
                   <div className="flex flex-wrap gap-2 rounded-xl border border-zinc-800 bg-zinc-900/70 p-2">
                     {TAB_OPTIONS.map((tab) => {
                       const TabIcon = tab.icon;
@@ -1169,8 +1128,7 @@ export default function App() {
                       );
                     })}
                   </div>
-
-                  {/* Tab content */}
+                  {}
                   <section className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
                     {activeTab === "diff" ? (
                       <DiffViewer
