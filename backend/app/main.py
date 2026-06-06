@@ -116,7 +116,13 @@ def fetch_manifest(request: FetchManifestRequest) -> dict[str, str]:
             raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{test_branch}/{test_file}"
 
             try:
-                with urllib.request.urlopen(raw_url, timeout=3.0) as response:
+                req = urllib.request.Request(
+                    raw_url,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    },
+                )
+                with urllib.request.urlopen(req, timeout=10.0) as response:
                     yaml_string = response.read().decode("utf-8")
                     return {
                         "yaml_string": yaml_string,
