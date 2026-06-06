@@ -57,7 +57,7 @@ def detect_storage_type() -> Literal["SSD", "HDD", "UNKNOWN"]:
     return "SSD"
 
 
-def parse_github_repo_url(repo_url: str) -> tuple[str, str, str]:
+def parse_github_repo_url(repo_url: str) -> tuple[str, str, str | None]:
     cleaned_url = repo_url.strip()
     match = GITHUB_REPO_PATTERN.match(cleaned_url)
 
@@ -72,12 +72,12 @@ def parse_github_repo_url(repo_url: str) -> tuple[str, str, str]:
 
     owner = match.group("owner")
     repo = match.group("repo").removesuffix(".git")
-    branch = match.group("branch") or "main"
+    branch = match.group("branch")
 
-    if not owner or not repo or branch.startswith("/"):
+    if not owner or not repo or (branch and branch.startswith("/")):
         raise HTTPException(status_code=400, detail="Could not parse the GitHub repository URL.")
 
-    return owner, repo, branch.strip("/")
+    return owner, repo, branch.strip("/") if branch else None
 
 
 @app.get("/api/v1/hardware", response_model=HostHardware)
@@ -100,26 +100,45 @@ def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
 
 @app.post("/api/v1/fetch-manifest")
 def fetch_manifest(request: FetchManifestRequest) -> dict[str, str]:
-    owner, repo, branch = parse_github_repo_url(request.repo_url)
+    owner, repo, parsed_branch = parse_github_repo_url(request.repo_url)
 
-    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{request.manifest_path}"
+    branches_to_test = [parsed_branch] if parsed_branch else ["main", "master"]
 
-    try:
-        with urllib.request.urlopen(raw_url, timeout=3.0) as response:
-            yaml_string = response.read().decode("utf-8")
-            return {"yaml_string": yaml_string}
-    except urllib.error.HTTPError as error:
-        if error.code == 404:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No file found at '{request.manifest_path}' in {owner}/{repo} on branch '{branch}'.",
-            ) from error
-        raise HTTPException(
-            status_code=400,
-            detail=f"GitHub returned HTTP {error.code} while fetching the Docker Compose manifest.",
-        ) from error
-    except (urllib.error.URLError, socket.timeout, TimeoutError) as error:
-        raise HTTPException(
-            status_code=400,
-            detail="Timed out or failed while contacting GitHub for the Docker Compose manifest.",
-        ) from error
+    if request.manifest_path == "compose.yaml":
+        files_to_test = ["compose.yaml", "docker-compose.yml", "compose.yml", "docker-compose.yaml"]
+    else:
+        files_to_test = [request.manifest_path]
+
+    last_error = None
+
+    for test_branch in branches_to_test:
+        for test_file in files_to_test:
+            raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{test_branch}/{test_file}"
+
+            try:
+                with urllib.request.urlopen(raw_url, timeout=3.0) as response:
+                    yaml_string = response.read().decode("utf-8")
+                    return {
+                        "yaml_string": yaml_string,
+                        "branch": test_branch,
+                        "manifest_path": test_file
+                    }
+            except urllib.error.HTTPError as error:
+                if error.code == 404:
+                    last_error = error
+                    continue
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"GitHub returned HTTP {error.code} while fetching the Docker Compose manifest.",
+                ) from error
+            except (urllib.error.URLError, socket.timeout, TimeoutError) as error:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Timed out or failed while contacting GitHub for the Docker Compose manifest.",
+                ) from error
+
+    branch_msg = parsed_branch if parsed_branch else "main/master"
+    raise HTTPException(
+        status_code=404,
+        detail=f"No file found at '{request.manifest_path}' in {owner}/{repo} on branch '{branch_msg}'.",
+    ) from last_error
