@@ -34,7 +34,7 @@ function normalizePrefix(row) {
   return row;
 }
 
-function getRowTone(row) {
+function getRowTone() {
   // All rows use uniform zinc styling — no accent color distinctions
   return "border-zinc-700 bg-zinc-800/30 text-zinc-400";
 }

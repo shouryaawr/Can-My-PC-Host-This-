@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   Cpu,
-  Download,
   FileCode,
   FileUp,
   Gauge,
@@ -601,7 +600,6 @@ export default function App() {
   const [apiResponse, setApiResponse] = useState(null);
   const [activeTab, setActiveTab] = useState("diff");
   const [isLoading, setIsLoading] = useState(false);
-  const [hardwareLoaded, setHardwareLoaded] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [analysisFailed, setAnalysisFailed] = useState(false);
   const [githubUrl, setGithubUrl] = useState("");
@@ -635,10 +633,8 @@ export default function App() {
         total_ram_mb: Math.round(totalGb * 1000),
         free_ram_mb:  Math.round(freeGb  * 1000),
       });
-      setHardwareLoaded(true);
       setHardwareSource("system");
-    } catch {
-      setHardwareLoaded(false);
+      // silently fail hardware detection
     }
   }, []);
 

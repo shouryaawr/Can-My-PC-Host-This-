@@ -255,7 +255,7 @@ function AdvisoryBanner({ severity, ramMarginMb, freeRamMb }) {
 
 function ServiceRow({ service }) {
   const zone = classifyService(service);
-  const { label, badge, dot, Icon, iconClass, explanation } = ZONE_META[zone];
+  const { label, badge, dot, Icon, iconClass } = ZONE_META[zone];
 
   return (
     <li className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
