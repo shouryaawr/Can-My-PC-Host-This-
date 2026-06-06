@@ -1,6 +1,83 @@
 import { Check, Clipboard, Download, FileCode2, Wand2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+/* ─────────────────────────── annotation vocabulary ─────────────────────── */
+/*
+ * Private, self-contained label map.
+ * This dictionary is intentionally NOT exported and must never be shared with
+ * or imported by TraceLog.jsx — that component owns its own log-parsing and
+ * stage-tinting engine completely independently.
+ *
+ * Matching strategy: each entry carries a `pattern` (RegExp) that is tested
+ * against the raw line text. The first match wins.
+ *
+ * HDD-host variables are flagged separately via the `hddOnly` boolean so that
+ * the caller can gate them behind the `isHddHost` runtime prop.
+ */
+const ANNOTATION_VOCAB = [
+  // CPU scheduling / worker pool variables
+  { pattern: /\bWORKERS\s*[:=]/, label: "CPU Floor",   hddOnly: false },
+  { pattern: /\bWEB_CONCURRENCY\s*[:=]/, label: "CPU Floor",   hddOnly: false },
+  // Cache ceiling
+  { pattern: /\bmaxmemory\s*[:=]/,       label: "Cache Bound",  hddOnly: false },
+  // Connection pool
+  { pattern: /\bmax_connections\s*[:=]/, label: "Conn Pool",    hddOnly: false },
+  // Any mutation under an active HDD host state
+  { pattern: /\bWORKERS\s*[:=]/,            label: "I/O Dampened", hddOnly: true },
+  { pattern: /\bWEB_CONCURRENCY\s*[:=]/,    label: "I/O Dampened", hddOnly: true },
+  { pattern: /\bmaxmemory\s*[:=]/,          label: "I/O Dampened", hddOnly: true },
+  { pattern: /\bmax_connections\s*[:=]/,    label: "I/O Dampened", hddOnly: true },
+];
+
+/**
+ * resolveAnnotationBadge
+ *
+ * Scans `line` against ANNOTATION_VOCAB and returns the appropriate two-word
+ * orientation label, or null if no mutation key is detected.
+ *
+ * When `isHddHost` is true, hddOnly entries take precedence so that all
+ * matched mutation variables surface as [I/O Dampened].
+ *
+ * @param {string}  line       — raw line text from the diff hunk
+ * @param {boolean} isHddHost  — whether the host storage tier is rotational HDD
+ * @returns {string|null}
+ */
+function resolveAnnotationBadge(line, isHddHost) {
+  if (typeof line !== "string" || !line) return null;
+
+  if (isHddHost) {
+    // HDD path: check hddOnly entries first
+    for (const entry of ANNOTATION_VOCAB) {
+      if (entry.hddOnly && entry.pattern.test(line)) return entry.label;
+    }
+  }
+
+  // Standard path: only non-hddOnly entries
+  for (const entry of ANNOTATION_VOCAB) {
+    if (!entry.hddOnly && entry.pattern.test(line)) return entry.label;
+  }
+
+  return null;
+}
+
+/* ─────────────────────────── annotation badge UI ───────────────────────── */
+
+/**
+ * AnnotationBadge — compact, muted grey inline chip.
+ * Rendered exclusively on added/optimized lines; never on removed lines.
+ */
+function AnnotationBadge({ label }) {
+  if (!label) return null;
+  return (
+    <span
+      className="ml-2 inline-flex shrink-0 items-center rounded border border-zinc-700 bg-zinc-800/70 px-1.5 py-0 font-mono text-[9px] font-medium uppercase tracking-wide text-zinc-500 select-none"
+      aria-label={`Annotation: ${label}`}
+    >
+      {label}
+    </span>
+  );
+}
+
 /* ─────────────────────────── diff logic ────────────────────────── */
 
 /**
@@ -51,22 +128,22 @@ function computeDiff(original = "", optimized = "") {
 
 const LINE_STYLES = {
   same: {
-    row: "hover:bg-slate-800/30",
+    row: "hover:bg-zinc-800/30",
     gutter: "text-zinc-700 select-none",
     sign: "",
     code: "text-zinc-400",
   },
   removed: {
-    row: "bg-rose-500/10 hover:bg-rose-500/15",
-    gutter: "text-rose-600 select-none",
+    row: "bg-red-500/10 hover:bg-red-500/15",
+    gutter: "text-red-500 select-none",
     sign: "-",
-    code: "text-rose-300",
+    code: "text-red-500",
   },
   added: {
-    row: "bg-emerald-500/10 hover:bg-emerald-500/15",
-    gutter: "text-emerald-600 select-none",
+    row: "bg-green-500/10 hover:bg-green-500/15",
+    gutter: "text-green-500 select-none",
     sign: "+",
-    code: "text-emerald-300",
+    code: "text-green-500",
   },
   // Sentinel for empty spacer cells in split view
   empty: {
@@ -77,8 +154,16 @@ const LINE_STYLES = {
   },
 };
 
-function DiffLine({ type, line, lineNo }) {
+/**
+ * DiffLine — unified view row.
+ *
+ * Badge placement rule: render badge only on `added` lines, positioned
+ * immediately after the trailing characters of the line text.
+ * Removed lines never carry badges.
+ */
+function DiffLine({ type, line, lineNo, badge }) {
   const s = LINE_STYLES[type];
+  const showBadge = type === "added" && badge;
   return (
     <tr className={`transition ${s.row}`}>
       <td className={`w-8 select-none px-2 py-0 text-right text-[10px] leading-5 ${s.gutter}`}>
@@ -88,7 +173,8 @@ function DiffLine({ type, line, lineNo }) {
         {s.sign}
       </td>
       <td className={`py-0 pr-4 pl-1 font-mono text-[11px] leading-5 whitespace-pre-wrap break-all ${s.code}`}>
-        {line}
+        <span>{line}</span>
+        {showBadge && <AnnotationBadge label={badge} />}
       </td>
     </tr>
   );
@@ -100,12 +186,12 @@ function DiffStats({ hunks }) {
   return (
     <div className="flex items-center gap-3 text-xs">
       {added > 0 && (
-        <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-400">
+        <span className="rounded-full bg-green-500/15 px-2 py-0.5 text-green-500">
           +{added} added
         </span>
       )}
       {removed > 0 && (
-        <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-rose-400">
+        <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-red-500">
           -{removed} removed
         </span>
       )}
@@ -167,7 +253,15 @@ function buildSplitRows(hunks) {
   return rows;
 }
 
-function SplitPaneRow({ hunk, lineNo, side }) {
+/**
+ * SplitPaneRow — one row inside a split-view pane.
+ *
+ * Badge placement rules:
+ *   • side === "right"  (Optimized pane) + hunk.type === "added"  → render badge
+ *   • side === "left"   (Original pane)                            → NEVER render badge
+ *   • hunk.type === "removed"                                      → NEVER render badge
+ */
+function SplitPaneRow({ hunk, lineNo, side, badge }) {
   if (!hunk) {
     // Empty filler row — keeps row heights in sync via CSS
     return (
@@ -178,14 +272,17 @@ function SplitPaneRow({ hunk, lineNo, side }) {
     );
   }
   const s = LINE_STYLES[hunk.type];
-  const bgClass = hunk.type === "removed" ? "bg-rose-500/10" : hunk.type === "added" ? "bg-emerald-500/10" : "";
+  const bgClass = hunk.type === "removed" ? "bg-red-500/10" : hunk.type === "added" ? "bg-green-500/10" : "";
+  // Badge only on right pane + added lines
+  const showBadge = side === "right" && hunk.type === "added" && badge;
   return (
     <tr className={`transition ${s.row}`}>
       <td className={`w-8 select-none px-2 py-0 text-right text-[10px] leading-5 ${s.gutter}`}>
         {lineNo}
       </td>
       <td className={`py-0 pr-4 pl-1 font-mono text-[11px] leading-5 whitespace-pre ${s.code} ${bgClass}`}>
-        {hunk.line}
+        <span>{hunk.line}</span>
+        {showBadge && <AnnotationBadge label={badge} />}
       </td>
     </tr>
   );
@@ -193,7 +290,7 @@ function SplitPaneRow({ hunk, lineNo, side }) {
 
 /* ── Main export ─────────────────────────────────────────────────── */
 
-export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDownload, sourceFilename }) {
+export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDownload, sourceFilename, isHddHost = false }) {
   const [diffViewMode, setDiffViewMode] = useState("unified");
   const [copied, setCopied] = useState(false);
 
@@ -223,7 +320,7 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
         {/* Left: title + stats */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-300">
-            <Wand2 className="h-3.5 w-3.5 text-emerald-400" />
+            <Wand2 className="h-3.5 w-3.5 text-zinc-500" />
             Optimized Manifest
           </div>
           <DiffStats hunks={hunks} />
@@ -235,12 +332,12 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
           <button
             type="button"
             onClick={handleCopy}
-            className={`inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-zinc-950/80 px-2.5 py-1 text-[0.68rem] font-medium text-zinc-400 transition hover:border-slate-600 hover:text-zinc-200 ${
+            className={`inline-flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-950/80 px-2.5 py-1 text-[0.68rem] font-medium text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200 ${
               copied ? "opacity-50" : "opacity-100"
             }`}
           >
             {copied
-              ? <Check className="h-3 w-3 text-emerald-400" />
+              ? <Check className="h-3 w-3 text-green-500" />
               : <Clipboard className="h-3 w-3" />}
             Copy manifest
           </button>
@@ -251,7 +348,7 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
               type="button"
               onClick={onDownload}
               title={sourceFilename ? `Download ${sourceFilename.replace(/\.ya?ml$/i, "")}.optimized.yml` : "Download optimized YAML"}
-              className="inline-flex items-center gap-1.5 rounded-md border border-slate-700 bg-zinc-950/80 px-2.5 py-1 text-[0.68rem] font-medium text-zinc-400 transition hover:border-slate-600 hover:text-zinc-200"
+              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-950/80 px-2.5 py-1 text-[0.68rem] font-medium text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200"
             >
               <Download className="h-3 w-3" />
               Download
@@ -259,7 +356,7 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
           )}
 
           {/* Unified / Side-by-Side toggle */}
-          <div className="inline-flex rounded-md border border-slate-700 bg-zinc-950/80 p-0.5">
+          <div className="inline-flex rounded-md border border-zinc-700 bg-zinc-950/80 p-0.5">
             {[
               { key: "unified",  label: "Unified"      },
               { key: "split",    label: "Side-by-Side" },
@@ -270,7 +367,7 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
                 onClick={() => setDiffViewMode(key)}
                 className={`rounded px-2.5 py-1 text-[0.68rem] font-medium transition ${
                   diffViewMode === key
-                    ? "bg-slate-700 text-zinc-100"
+                    ? "bg-zinc-700 text-zinc-100"
                     : "text-zinc-500 hover:text-zinc-200"
                 }`}
               >
@@ -283,7 +380,7 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
 
       {/* ── Unified diff table ── */}
       {diffViewMode === "unified" && (
-        <div className="overflow-auto rounded-lg border border-slate-800 bg-zinc-950">
+        <div className="overflow-auto rounded-lg border border-zinc-800 bg-zinc-950">
           <table className="min-w-full border-collapse">
             <tbody>
               {hunks.map((hunk, idx) => {
@@ -299,12 +396,17 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
                   optLine++;
                   lineNo = origLine;
                 }
+                // Resolve badge: only for added lines — removed lines never carry badges
+                const badge = hunk.type === "added"
+                  ? resolveAnnotationBadge(hunk.line, isHddHost)
+                  : null;
                 return (
                   <DiffLine
                     key={idx}
                     type={hunk.type}
                     line={hunk.line}
                     lineNo={lineNo}
+                    badge={badge}
                   />
                 );
               })}
@@ -337,39 +439,57 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
         }
 
         return (
-          <div className="rounded-lg border border-slate-800 bg-zinc-950 overflow-hidden">
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950 overflow-hidden">
             {/* Column headers */}
-            <div className="grid grid-cols-2 border-b border-slate-800 bg-zinc-900/60">
-              <div className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium text-zinc-500 border-r border-slate-800">
-                <FileCode2 className="h-3 w-3 text-cyan-400" />
+            <div className="grid grid-cols-2 border-b border-zinc-800 bg-zinc-900/60">
+              <div className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium text-zinc-500 border-r border-zinc-800">
+                <FileCode2 className="h-3 w-3 text-zinc-500" />
                 Original
               </div>
               <div className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium text-zinc-500">
-                <Wand2 className="h-3 w-3 text-emerald-400" />
+                <Wand2 className="h-3 w-3 text-zinc-500" />
                 Optimized
               </div>
             </div>
 
             {/* Two independent panes — each scrolls horizontally on its own */}
             <div className="grid grid-cols-2 w-full">
-              {/* Left pane — Original */}
-              <div className="min-w-0 overflow-x-auto border-r border-slate-800/60">
+              {/* Left pane — Original. Badge prop intentionally withheld (always null). */}
+              <div className="min-w-0 overflow-x-auto border-r border-zinc-800/60">
                 <table className="border-collapse">
                   <tbody>
                     {leftRows.map((r, idx) => (
-                      <SplitPaneRow key={idx} hunk={r.hunk} lineNo={r.lineNo} side="left" />
+                      <SplitPaneRow
+                        key={idx}
+                        hunk={r.hunk}
+                        lineNo={r.lineNo}
+                        side="left"
+                        badge={null}
+                      />
                     ))}
                   </tbody>
                 </table>
               </div>
 
-              {/* Right pane — Optimized */}
+              {/* Right pane — Optimized. Badges rendered on added lines only. */}
               <div className="min-w-0 overflow-x-auto">
                 <table className="border-collapse">
                   <tbody>
-                    {rightRows.map((r, idx) => (
-                      <SplitPaneRow key={idx} hunk={r.hunk} lineNo={r.lineNo} side="right" />
-                    ))}
+                    {rightRows.map((r, idx) => {
+                      // Resolve badge only for added hunks in the right (Optimized) pane
+                      const badge = r.hunk && r.hunk.type === "added"
+                        ? resolveAnnotationBadge(r.hunk.line, isHddHost)
+                        : null;
+                      return (
+                        <SplitPaneRow
+                          key={idx}
+                          hunk={r.hunk}
+                          lineNo={r.lineNo}
+                          side="right"
+                          badge={badge}
+                        />
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

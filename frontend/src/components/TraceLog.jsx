@@ -35,22 +35,8 @@ function normalizePrefix(row) {
 }
 
 function getRowTone(row) {
-  if (row.startsWith("[MANIFEST]") || row.startsWith("[HARDWARE]")) {
-    return "border-slate-800 bg-slate-900/30 text-slate-400";
-  }
-  if (row.startsWith("[BASELINE]")) {
-    return "border-blue-500/20 bg-blue-500/5 text-blue-400";
-  }
-  if (row.startsWith("[OPTIMIZATION]")) {
-    return "border-emerald-500/20 bg-emerald-500/5 text-emerald-400";
-  }
-  if (row.startsWith("[SAFETY]") || row.startsWith("[WARNING]")) {
-    return "border-amber-500/20 bg-amber-500/5 text-amber-400";
-  }
-  if (row.startsWith("[CONTEXT]")) {
-    return "border-violet-500/20 bg-violet-500/5 text-violet-400";
-  }
-  return "border-slate-800 bg-zinc-950 text-zinc-300";
+  // All rows use uniform zinc styling — no accent color distinctions
+  return "border-zinc-700 bg-zinc-800/30 text-zinc-400";
 }
 
 export default function TraceLog({ trace = [], activeProfile }) {
@@ -78,11 +64,11 @@ export default function TraceLog({ trace = [], activeProfile }) {
   }, [rows]);
 
   return (
-    <section className="flex min-h-0 flex-col overflow-hidden rounded border border-slate-800 bg-zinc-950 shadow-lg shadow-black/20">
-      <div className="flex w-full flex-row items-center justify-between border-b border-slate-800 px-3 py-2">
+    <section className="flex min-h-0 flex-col overflow-hidden rounded border border-zinc-800 bg-zinc-950 shadow-lg shadow-black/20">
+      <div className="flex w-full flex-row items-center justify-between border-b border-zinc-800 px-3 py-2">
         <span className="font-mono text-xs text-zinc-500">engine-trace / runtime</span>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-slate-500">{rows.length} events</span>
+          <span className="text-xs text-zinc-500">{rows.length} events</span>
           <button
             type="button"
             onClick={handleCopy}
@@ -92,7 +78,7 @@ export default function TraceLog({ trace = [], activeProfile }) {
             }`}
           >
             {copied ? (
-              <Check className="h-3 w-3 text-emerald-400" aria-hidden="true" />
+              <Check className="h-3 w-3 text-green-500" aria-hidden="true" />
             ) : (
               <ClipboardList className="h-3 w-3" aria-hidden="true" />
             )}

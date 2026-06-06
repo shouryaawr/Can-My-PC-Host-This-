@@ -97,6 +97,12 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             warnings=warnings,
         )
 
+    # Null-serialization pass: round-trip the unmutated document tree through
+    # _dump_yaml() immediately after parsing, before any variable injection or
+    # scaling modifications. The result is a canonically formatted baseline that
+    # eliminates quote-style and spacing false-positives in the frontend diff.
+    baseline_yaml_string = _dump_yaml(yaml, document)
+
     _check_port_conflicts(document, warnings)
 
     services = _extract_services(document)
@@ -137,6 +143,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
         return _response(
             status="UNSOLVABLE",
             yaml_string=_dump_yaml(yaml, document),
+            baseline_yaml_string=baseline_yaml_string,
             trace=trace
             + [
                 "[Capacity] Minimum service memory floors exceed host RAM: "
@@ -307,10 +314,13 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
                 "cannot fit services within host capacity."
             )
             optimized_yaml = _dump_yaml(yaml, document)
+
+
             return AnalyzeResponse(
                 status="UNSOLVABLE",
                 optimized_yaml_string=optimized_yaml,
                 optimized_yaml=optimized_yaml,
+                baseline_yaml_string=baseline_yaml_string,
                 metrics=OptimizationMetrics(
                     initial_predicted_ram_mb=initial_predicted_ram,
                     final_predicted_ram_mb=sum(s.final_ram_mb for s in contexts),
@@ -372,10 +382,12 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
 
     optimized_yaml = _dump_yaml(yaml, document)
 
+
     return AnalyzeResponse(
         status=status,
         optimized_yaml_string=optimized_yaml,
         optimized_yaml=optimized_yaml,
+        baseline_yaml_string=baseline_yaml_string,
         metrics=OptimizationMetrics(
             initial_predicted_ram_mb=initial_predicted_ram,
             final_predicted_ram_mb=final_predicted_ram,
@@ -1112,12 +1124,14 @@ def _response(
     trace: list[str],
     warnings: list[str],
     services: list[ServiceContext] | None = None,
+    baseline_yaml_string: str = "",
 ) -> AnalyzeResponse:
     service_contexts = services or []
     return AnalyzeResponse(
         status=status,
         optimized_yaml_string=yaml_string,
         optimized_yaml=yaml_string,
+        baseline_yaml_string=baseline_yaml_string or yaml_string,
         metrics=OptimizationMetrics(
             initial_predicted_ram_mb=sum(service.initial_ram_mb for service in service_contexts),
             final_predicted_ram_mb=sum(service.final_ram_mb for service in service_contexts),
