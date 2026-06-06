@@ -23,7 +23,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-COMPOSE_FILENAMES = ("docker-compose.yml", "docker-compose.yaml", "compose.yml")
+
 GITHUB_REPO_PATTERN = re.compile(
     r"^(?:https?://)?(?:www\.)?github\.com/"
     r"(?P<owner>[^/\s]+)/(?P<repo>[^/\s?#]+)"
@@ -100,27 +100,24 @@ def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
 def fetch_manifest(request: FetchManifestRequest) -> dict[str, str]:
     owner, repo, branch = parse_github_repo_url(request.repo_url)
 
-    for filename in COMPOSE_FILENAMES:
-        raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{filename}"
+    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{request.manifest_path}"
 
-        try:
-            with urllib.request.urlopen(raw_url, timeout=3.0) as response:
-                yaml_string = response.read().decode("utf-8")
-                return {"yaml_string": yaml_string}
-        except urllib.error.HTTPError as error:
-            if error.code == 404:
-                continue
+    try:
+        with urllib.request.urlopen(raw_url, timeout=3.0) as response:
+            yaml_string = response.read().decode("utf-8")
+            return {"yaml_string": yaml_string}
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
             raise HTTPException(
-                status_code=400,
-                detail=f"GitHub returned HTTP {error.code} while fetching the Docker Compose manifest.",
+                status_code=404,
+                detail=f"No file found at '{request.manifest_path}' in {owner}/{repo} on branch '{branch}'.",
             ) from error
-        except (urllib.error.URLError, socket.timeout, TimeoutError) as error:
-            raise HTTPException(
-                status_code=400,
-                detail="Timed out or failed while contacting GitHub for the Docker Compose manifest.",
-            ) from error
-
-    raise HTTPException(
-        status_code=400,
-        detail="Could not locate a standard Docker Compose manifest in the root repository path.",
-    )
+        raise HTTPException(
+            status_code=400,
+            detail=f"GitHub returned HTTP {error.code} while fetching the Docker Compose manifest.",
+        ) from error
+    except (urllib.error.URLError, socket.timeout, TimeoutError) as error:
+        raise HTTPException(
+            status_code=400,
+            detail="Timed out or failed while contacting GitHub for the Docker Compose manifest.",
+        ) from error

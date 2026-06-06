@@ -27,6 +27,7 @@ class AnalyzeRequest(BaseModel):
 
 class FetchManifestRequest(BaseModel):
     repo_url: str
+    manifest_path: str = "compose.yaml"
 
 
 class MutatedVariableDetail(BaseModel):

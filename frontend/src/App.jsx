@@ -609,6 +609,8 @@ export default function App() {
   const [hardwareSource, setHardwareSource] = useState("system");
   const [ramUnit, setRamUnit] = useState("MB");
   const [sourceFilename, setSourceFilename] = useState("docker-compose.yml");
+  const [manifestPath, setManifestPath] = useState("compose.yaml");
+  const [show404Input, setShow404Input] = useState(false);
   const [customConfig, setCustomConfig] = useState({
     ram_safety_buffer: 0.75,
     cpu_threshold_multiplier: 1.0,
@@ -678,6 +680,7 @@ export default function App() {
   async function handleGithubFetch(event) {
     event.preventDefault();
     setFetchError(null);
+    setShow404Input(false);
     setIsLoading(true);
     let handledError = false;
 
@@ -685,7 +688,7 @@ export default function App() {
       const response = await fetch("/api/v1/fetch-manifest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ repo_url: githubUrl }),
+        body: JSON.stringify({ repo_url: githubUrl, manifest_path: manifestPath }),
       });
 
       if (!response.ok) {
@@ -695,14 +698,19 @@ export default function App() {
             ? errorData.detail
             : "Could not fetch a Docker Compose manifest from that repository.";
         setFetchError(detail);
+        if (response.status === 404) {
+          setShow404Input(true);
+        }
         handledError = true;
         throw new Error(detail);
       }
 
       const data = await response.json();
       setYamlString(data.yaml_string);
-      setSourceFilename("docker-compose.yml");
+      setSourceFilename(manifestPath);
       setGithubUrl("");
+      setManifestPath("compose.yaml");
+      setShow404Input(false);
       setInputMode("paste");
       setApiResponse(null);
       setAnalysisFailed(false);
@@ -926,6 +934,38 @@ export default function App() {
                   </div>
                   {fetchError ? (
                     <p className="mt-2 text-xs leading-5 text-red-500">{fetchError}</p>
+                  ) : null}
+                  {show404Input ? (
+                    <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+                      <label
+                        htmlFor="custom-manifest-path"
+                        className="mb-1.5 block text-xs font-medium text-amber-400"
+                      >
+                        Could not find a compose file at the repository root. Please specify the
+                        custom file path (e.g.,{" "}
+                        <span className="font-mono text-amber-300">deployments/docker/compose.yml</span>
+                        ):
+                      </label>
+                      <input
+                        id="custom-manifest-path"
+                        type="text"
+                        className="w-full rounded-md border border-amber-500/40 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-amber-400 focus:ring-1 focus:ring-amber-400/20"
+                        placeholder="path/to/compose.yml"
+                        value={manifestPath}
+                        onChange={(e) => setManifestPath(e.target.value)}
+                        disabled={isLoading}
+                      />
+                      <button
+                        type="submit"
+                        disabled={isLoading || !manifestPath.trim()}
+                        className="mt-2 inline-flex w-full items-center justify-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/20 px-3 py-2 text-xs font-semibold text-amber-300 transition hover:bg-amber-500/30 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isLoading ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                        ) : null}
+                        Retry with Custom Path
+                      </button>
+                    </div>
                   ) : null}
                   </form>
                 ) : null}
