@@ -41,8 +41,11 @@ Not all workloads are created equal. Choose a profile that fits your exact use-c
 - **Max Performance**: Uses up to 95% of your system resources. Run this when you have a dedicated server.
 - **Advanced/Custom**: Fully customize safety buffers, CPU multipliers, loop iterations, and cgroups fallbacks.
 
-**Frictionless GitHub Integrations**
-Directly fetch and analyze manifests from public GitHub repositories using our backend parsers. No copy-pasting required. *(Note: The fetch engine natively supports `compose.yaml`, `docker-compose.yml`, `docker-compose.yaml`, and common variants.)*
+**Frictionless Monorepo GitHub Integrations**
+Directly fetch and analyze manifests from public GitHub repositories using our backend parsers. No copy-pasting required. If your compose file is buried deep inside a monorepo, the engine automatically falls back to the GitHub Tree API, recursively scanning nested directories and providing a clean dropdown selection if multiple manifests are discovered.
+
+**Bulletproof Port Conflict Engine**
+The backend incorporates a pre-processing tokenization layer that intelligently neuters environment variable syntaxes (like `${PORT}:8080`) before scanning, eliminating port conflict false positives while perfectly mapping standard `host:container` layouts.
 
 **Interactive Visualizations**
 - **Node Topology**: A dynamic visual graph mapping the architecture and network dependencies of your parsed manifest.
@@ -53,10 +56,10 @@ Directly fetch and analyze manifests from public GitHub repositories using our b
 
 ## How It Works
 
-1. **Ingestion**: Paste your YAML or provide a GitHub URL.
-2. **Parsing**: The FastAPI backend uses `ruamel.yaml` to safely parse the manifest while preserving your original comments and formatting.
-3. **Simulation**: The deterministic engine loops through your services, checking requested replicas and base weights against your hardware profile constraints.
-4. **Injection**: Resource constraints are synthesized and seamlessly injected back into a valid Compose file.
+1. **Ingestion**: Paste your raw YAML or provide a repository URL. The engine handles deep monorepo pathing automatically.
+2. **Simulation**: The FastAPI backend evaluates the structural topology, resolving replicas, base hardware weights, and mathematical capacity thresholds.
+3. **AST JSON Patching**: Instead of brute-force rewriting the entire file (which causes massive diff bloat and YAML anchor expansion), the backend generates a lean AST JSON Patch Array of precise coordinates containing only the calculated modifications.
+4. **Dynamic Overlay**: The frontend uses the `yaml` package to overlay these exact patches dynamically onto the raw payload. This completely preserves your file's aliases, formatting, and inline comments in the syntax-highlighted Diff Viewer.
 
 ---
 
