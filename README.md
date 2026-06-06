@@ -29,7 +29,7 @@ Built for developers who want to run heavy local deployments without freezing th
 ## Key Features
 
 **Deterministic Optimization Engine**
-Say goodbye to Out-Of-Memory (OOM) kills. The engine calculates predicted RAM and CPU utilization for every service in your manifest and injects hard limits (`deploy.resources.limits`) and soft reservations (`deploy.resources.reservations`) based on mathematical models of your hardware capacity.
+Say goodbye to Out-Of-Memory (OOM) kills. The engine calculates predicted RAM and CPU utilization for every service in your manifest and injects strict constraints (`deploy.resources.limits`) based on mathematical models of your hardware capacity.
 
 **Hardware Auto-Detection & Manual Override**
 Since browsers restrict access to exact device specifications for security, the dashboard leverages available browser APIs to fetch the closest approximation of your logical CPU cores and total system memory. For precise tuning, we provide a manual edit button so you can easily override these estimates and input your exact hardware specs or simulate a different machine.
@@ -68,7 +68,7 @@ Directly fetch and analyze manifests from public GitHub repositories using our b
 - **Lucide React**: Clean, modern iconography.
 
 **Backend & Data Processing**
-- **Python** + **FastAPI**: High-performance asynchronous API endpoints.
+- **Python** + **FastAPI**: High-performance API endpoints.
 - **ruamel.yaml**: Lossless YAML parsing and emitting.
 - **psutil**: Advanced system and hardware telemetry profiling.
 
