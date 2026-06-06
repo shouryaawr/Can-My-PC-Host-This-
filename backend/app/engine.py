@@ -513,7 +513,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
                 patches.append(PatchCoord(
                     op="set",
                     path=["services", service.name, "deploy", "resources", "limits", "cpus"],
-                    value=str(cpu_limit)
+                    value=cpu_limit
                 ))
 
                                                                                          
