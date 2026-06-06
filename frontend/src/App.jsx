@@ -88,6 +88,7 @@ const STATUS_CLASSES = {
   DEGRADED_SAFE: "border-zinc-600 bg-zinc-800/60 text-zinc-300",
   UNSOLVABLE: "border-red-500/30 bg-red-500/10 text-red-500",
   INVALID_MANIFEST: "border-red-500/30 bg-red-500/10 text-red-500",
+  UNSUPPORTED_ORCHESTRATOR: "border-amber-500/30 bg-amber-500/10 text-amber-400",
 };
 
 const STATUS_LABELS = {
@@ -95,6 +96,7 @@ const STATUS_LABELS = {
   DEGRADED_SAFE: "Degraded — Safe",
   UNSOLVABLE: "Unsolvable",
   INVALID_MANIFEST: "Invalid Manifest",
+  UNSUPPORTED_ORCHESTRATOR: "Unsupported Orchestrator",
 };
 
 const DEFAULT_HARDWARE = {
@@ -764,6 +766,7 @@ export default function App() {
       // Diff-first: always open on diff tab after successful analysis
       const failed =
         data.status === "INVALID_MANIFEST" ||
+        data.status === "UNSUPPORTED_ORCHESTRATOR" ||
         !data.optimized_yaml_string;
       setAnalysisFailed(failed);
       setActiveTab(failed ? "trace" : "diff");

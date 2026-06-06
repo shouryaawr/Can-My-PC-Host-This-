@@ -57,7 +57,7 @@ class OptimizationMetrics(BaseModel):
 
 
 class AnalyzeResponse(BaseModel):
-    status: Literal["FULLY_SOLVED", "DEGRADED_SAFE", "UNSOLVABLE", "INVALID_MANIFEST"]
+    status: Literal["FULLY_SOLVED", "DEGRADED_SAFE", "UNSOLVABLE", "INVALID_MANIFEST", "UNSUPPORTED_ORCHESTRATOR"]
     optimized_yaml_string: str
     optimized_yaml: str
     baseline_yaml_string: str

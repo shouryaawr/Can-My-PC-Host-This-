@@ -30,8 +30,7 @@ desktop.ini
 .env.*.local
 
 # QA / Test Artifacts
-backend/qa_test_output.txt
-backend/qa_test_matrix.py
-backend/test_qa.py
-backend/.pytest_cache/
+*.log
+*.txt
+qa_*.md
 *.test-report.*

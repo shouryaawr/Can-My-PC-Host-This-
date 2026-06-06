@@ -9,13 +9,20 @@
       "base_ram_mb": 128.00, 
       "base_cpu": 0.25, 
       "ram_scaling_factor": 15.00,
-      "default_max_variables": { "max_connections": 100 }
+      "default_max_variables": { "max_connections": 100 },
+      "variable_aliases": {
+        "max_connections": ["DB_POOL_SIZE", "DATABASE_POOL_SIZE", "PGBOUNCER_DEFAULT_POOL_SIZE", "MAX_POOL_SIZE", "POOL_SIZE"]
+      }
     },
     "backend_hybrid": { 
       "base_ram_mb": 64.00, 
       "base_cpu": 0.20, 
       "ram_scaling_factor": 32.00,
-      "default_max_variables": { "WORKERS": 4, "WEB_CONCURRENCY": 4 }
+      "default_max_variables": { "WORKERS": 4, "WEB_CONCURRENCY": 4 },
+      "variable_aliases": {
+        "WORKERS": ["GUNICORN_WORKERS", "WEB_WORKERS", "NUM_WORKERS", "MAX_PROCS", "POOL_SIZE", "SERVER_WORKERS"],
+        "WEB_CONCURRENCY": ["CONCURRENCY", "THREAD_COUNT", "NUM_THREADS", "WORKER_THREADS"]
+      }
     },
     "backend_low_priority": { 
       "base_ram_mb": 64.00, 
@@ -27,7 +34,10 @@
       "base_ram_mb": 16.00, 
       "base_cpu": 0.05, 
       "ram_scaling_factor": 1.00,
-      "default_max_variables": { "maxmemory": 256 }
+      "default_max_variables": { "maxmemory": 256 },
+      "variable_aliases": {
+        "maxmemory": ["REDIS_MAXMEMORY", "CACHE_MAX_MEMORY", "MAX_MEMORY_MB", "MEMCACHED_MEMORY"]
+      }
     },
     "frontend": { 
       "base_ram_mb": 16.00, 

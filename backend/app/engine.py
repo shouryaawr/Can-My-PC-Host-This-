@@ -56,6 +56,39 @@ class ServiceContext:
     # x-tuning extension fields
     xtuning_ram_floor_mb: float | None = None
     xtuning_never_cgroup: bool = False
+    xtuning_target_variable: str | None = None
+    xtuning_optimizable: bool = True
+    xtuning_hardcoded_ram_mb: float | None = None
+
+
+import re
+
+# Matches hardcoded memory bounds often found in Java/Node.js entrypoints.
+# If these exist, environment tweaking is ignored by the runtime, so we
+# must flag the service as unoptimizable unless overridden.
+_HARDCODED_MEMORY_REGEX = re.compile(r"(-Xmx\d+[gmGM]|--max-old-space-size=\d+)")
+
+
+def _parse_hardcoded_memory_mb(flag: str) -> float | None:
+    if flag.startswith("--max-old-space-size="):
+        try:
+            return float(flag.split("=")[1])
+        except ValueError:
+            return None
+    elif flag.startswith("-Xmx"):
+        val_str = flag[4:]
+        if not val_str:
+            return None
+        unit = val_str[-1].lower()
+        try:
+            val = float(val_str[:-1])
+            if unit == 'g':
+                return val * 1024.0
+            elif unit == 'm':
+                return val
+        except ValueError:
+            pass
+    return None
 
 
 def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
@@ -104,6 +137,24 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
     # scaling modifications. The result is a canonically formatted baseline that
     # eliminates quote-style and spacing false-positives in the frontend diff.
     baseline_yaml_string = _dump_yaml(yaml, document)
+
+    # Pre-flight orchestrator check: reject non-Docker-Compose manifests fast,
+    # before any service extraction or optimization logic runs.
+    orchestrator_rejection = _detect_orchestrator(document)
+    if orchestrator_rejection:
+        name, hint = orchestrator_rejection
+        return _response(
+            status="UNSUPPORTED_ORCHESTRATOR",
+            yaml_string=payload.yaml_string,
+            trace=[
+                f"[Orchestrator] Detected a {name} manifest. "
+                f"{hint} "
+                "This tool is designed for Docker Compose files that run on a local PC. "
+                "Please provide a valid docker-compose.yml or compose.yaml."
+            ],
+            warnings=warnings,
+            free_ram_mb=payload.host_hardware.free_ram_mb,
+        )
 
     _check_port_conflicts(document, warnings)
 
@@ -167,6 +218,25 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
     _recalculate(contexts, profiles, storage_type)
     initial_predicted_ram = sum(service.current_ram_mb for service in contexts)
 
+    # Pre-budget check: if a strict unoptimizable monolith needs more RAM than
+    # the host physically has, bail immediately. Tuning cannot save it.
+    for service in contexts:
+        if not service.xtuning_optimizable and service.current_ram_mb > payload.host_hardware.free_ram_mb:
+            return _response(
+                status="UNSOLVABLE",
+                yaml_string=_dump_yaml(yaml, document),
+                baseline_yaml_string=baseline_yaml_string,
+                trace=trace
+                + [
+                    f"[Capacity] Service '{service.name}' requires {round(service.current_ram_mb, 1)}MB "
+                    "but is marked unoptimizable (hardcoded bounds or x-tuning.optimizable=false). "
+                    f"This exceeds total host free RAM ({round(payload.host_hardware.free_ram_mb, 1)}MB)."
+                ],
+                warnings=warnings,
+                services=contexts,
+                free_ram_mb=payload.host_hardware.free_ram_mb,
+            )
+
     if initial_predicted_ram > 0.80 * effective_free_ram:
         for service in contexts:
             service.current_ram_mb *= 0.90
@@ -215,20 +285,18 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
         changes = 0
 
         for service in contexts:
+            if not service.xtuning_optimizable:
+                continue
             if _at_floor(service, profiles, floor_strictness) or service.tier == "backend_low_priority":
                 continue
 
-            variable_name = _primary_variable_name(service.tier)
+            variable_name = _resolve_primary_variable(service, profiles)
             if not variable_name:
                 continue
 
             if c_gap > 0:
-                variable_name = _primary_variable_name(service.tier)
-                if not variable_name:
-                    continue
-
                 current_value = _read_env_number(service.node, variable_name)
-                floor_value = profiles["floors"][service.tier]["variables"].get(variable_name)
+                floor_value = _resolve_floor_value(service, variable_name, profiles)
                 if current_value is None or floor_value is None or current_value <= floor_value:
                     continue
 
@@ -262,14 +330,16 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
                 continue
 
             current_value = _read_env_number(service.node, variable_name)
-            floor_value = profiles["floors"][service.tier]["variables"].get(variable_name)
+            floor_value = _resolve_floor_value(service, variable_name, profiles)
             if current_value is None or floor_value is None or current_value <= floor_value:
-                if service.tier != "backend_hybrid" or variable_name != "WORKERS":
+                # Primary variable is at floor; try the secondary variable
+                # (e.g. WEB_CONCURRENCY or its alias for backend_hybrid).
+                secondary_var = _resolve_secondary_variable(service, profiles)
+                if not secondary_var or secondary_var == variable_name:
                     continue
-
-                variable_name = "WEB_CONCURRENCY"
+                variable_name = secondary_var
                 current_value = _read_env_number(service.node, variable_name)
-                floor_value = profiles["floors"][service.tier]["variables"].get(variable_name)
+                floor_value = _resolve_floor_value(service, variable_name, profiles)
                 if current_value is None or floor_value is None or current_value <= floor_value:
                     continue
 
@@ -289,10 +359,11 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             c_gap = c_predicted - cpu_budget
             changes += 1
             saved_ram = max(0.0, old_ram - service.current_ram_mb)
-            if variable_name == "WEB_CONCURRENCY":
+            primary_name = _resolve_primary_variable(service, profiles)
+            if variable_name != primary_name:
                 trace.append(
-                    "[Optimize] Reduced WEB_CONCURRENCY for "
-                    f"service:{service.name} to save memory as workers hit their minimum floor."
+                    f"[Optimize] Reduced {variable_name} for "
+                    f"service:{service.name} to save memory as primary variable hit its minimum floor."
                 )
             else:
                 trace.append(
@@ -663,6 +734,120 @@ def _safe_image_lookup_table(profiles: dict[str, Any]) -> dict[str, Any]:
     return lookup_table if isinstance(lookup_table, dict) else {}
 
 
+# ---------------------------------------------------------------------------
+# Orchestrator fingerprint table
+# ---------------------------------------------------------------------------
+# Each entry is: (top-level key, optional value substring, display name, hint)
+# The value substring check is applied to str(document[key]) and is
+# case-insensitive. Use None to match purely on key presence.
+_ORCHESTRATOR_SIGNATURES: list[tuple[str, str | None, str, str]] = [
+    (
+        "apiVersion",
+        None,
+        "Kubernetes",
+        "Kubernetes manifests are designed for distributed clusters, not local PC hosting.",
+    ),
+    (
+        "kind",
+        None,
+        "Kubernetes",
+        "Kubernetes manifests are designed for distributed clusters, not local PC hosting.",
+    ),
+    (
+        "job",
+        None,
+        "HashiCorp Nomad",
+        "Nomad job files target distributed infrastructure, not local Docker Compose stacks.",
+    ),
+    (
+        "- hosts",
+        None,
+        "Ansible Playbook",
+        "Ansible playbooks describe remote provisioning, not local container orchestration.",
+    ),
+    (
+        "hosts",
+        None,
+        "Ansible Playbook",
+        "Ansible playbooks describe remote provisioning, not local container orchestration.",
+    ),
+    (
+        "swarm",
+        None,
+        "Docker Swarm stack",
+        "Docker Swarm stack files require a multi-node Swarm cluster, not a single local host.",
+    ),
+]
+
+# Docker Compose version strings that are also valid — do not false-positive on them.
+_COMPOSE_VERSION_PREFIXES = ("2", "3")
+
+
+def _detect_orchestrator(document: Any) -> tuple[str, str] | None:
+    """Return (display_name, hint) when the document looks like a non-Compose
+    orchestrator manifest, or ``None`` when it is safe to proceed.
+
+    The check is intentionally shallow — it only inspects the top-level key
+    set and, where relevant, the first few characters of a key's value.  This
+    keeps the pre-flight O(1) on the key set regardless of manifest size.
+    """
+    if not isinstance(document, dict):
+        return None
+
+    top_keys = set(document.keys())
+
+    # Kubernetes: presence of `apiVersion` or `kind` at the root is unambiguous.
+    if "apiVersion" in top_keys or "kind" in top_keys:
+        return (
+            "Kubernetes",
+            "Kubernetes manifests are designed for distributed clusters, not local PC hosting.",
+        )
+
+    # Nomad: `job` block at root with no `services` sibling.
+    if "job" in top_keys and "services" not in top_keys:
+        return (
+            "HashiCorp Nomad",
+            "Nomad job files target distributed infrastructure, not local Docker Compose stacks.",
+        )
+
+    # Ansible: playbooks are YAML *lists* at root, or contain a `hosts` key
+    # without a `services` sibling.
+    if isinstance(document, list) and document and isinstance(document[0], dict) and "hosts" in document[0]:
+        return (
+            "Ansible Playbook",
+            "Ansible playbooks describe remote provisioning, not local container orchestration.",
+        )
+    if "hosts" in top_keys and "services" not in top_keys:
+        return (
+            "Ansible Playbook",
+            "Ansible playbooks describe remote provisioning, not local container orchestration.",
+        )
+
+    # Helm chart: Chart.yaml always has an `apiVersion` (caught above) and a
+    # `description` field. Belt-and-suspenders check for Chart.yaml shape.
+    if "description" in top_keys and "appVersion" in top_keys and "services" not in top_keys:
+        return (
+            "Helm Chart (Chart.yaml)",
+            "Helm chart definitions describe Kubernetes packaging, not local Docker Compose stacks.",
+        )
+
+    # Docker Swarm stack files look exactly like Compose files but use
+    # `deploy.mode: global` or reference swarm-only secrets/configs at root.
+    if "secrets" in top_keys and "services" in top_keys:
+        # Compose files can also have secrets — only flag when the secrets block
+        # contains a `driver` key, which is Swarm-only.
+        secrets_block = document.get("secrets")
+        if isinstance(secrets_block, dict):
+            for secret_cfg in secrets_block.values():
+                if isinstance(secret_cfg, dict) and "driver" in secret_cfg:
+                    return (
+                        "Docker Swarm stack",
+                        "Docker Swarm stack files require a multi-node Swarm cluster, not a single local host.",
+                    )
+
+    return None
+
+
 def _extract_services(document: Any) -> dict[str, Any]:
     if isinstance(document, dict) and isinstance(document.get("services"), dict):
         return document["services"]
@@ -719,6 +904,46 @@ def _extract_xtuning(
         trace.append(
             f"[x-tuning] Service '{service_name}' is marked never_cgroup; "
             "it will be excluded from memory cgroup limits."
+        )
+
+    # target_variable — explicit variable name override for the tuning loop.
+    # Allows services using non-standard env var names (e.g. POOL_SIZE, JAVA_OPTS)
+    # to participate in optimization without modifying profiles.json.
+    raw_tv = xtuning.get("target_variable")
+    if isinstance(raw_tv, str) and raw_tv.strip():
+        result["xtuning_target_variable"] = raw_tv.strip()
+        trace.append(
+            f"[x-tuning] Service '{service_name}' overrides tuning target to "
+            f"'{raw_tv.strip()}' via x-tuning.target_variable."
+        )
+    elif raw_tv is not None:
+        trace.append(
+            f"[x-tuning] Service '{service_name}' has invalid x-tuning.target_variable "
+            f"({raw_tv!r}); ignoring and using profile synonym resolution."
+        )
+
+    # Always attempt to extract hardcoded memory bounds so we can correctly compute
+    # the baseline RAM footprint, even if the service is explicitly marked.
+    command_str = str(service.get("command", ""))
+    entrypoint_str = str(service.get("entrypoint", ""))
+    match = _HARDCODED_MEMORY_REGEX.search(command_str) or _HARDCODED_MEMORY_REGEX.search(entrypoint_str)
+    if match:
+        extracted_mb = _parse_hardcoded_memory_mb(match.group(1))
+        if extracted_mb:
+            result["xtuning_hardcoded_ram_mb"] = extracted_mb
+
+    # optimizable — explicit boolean override. If absent, fallback to regex match.
+    raw_opt = xtuning.get("optimizable")
+    if isinstance(raw_opt, bool):
+        result["xtuning_optimizable"] = raw_opt
+        trace.append(
+            f"[x-tuning] Service '{service_name}' explicitly marked optimizable={raw_opt}."
+        )
+    elif match:
+        result["xtuning_optimizable"] = False
+        trace.append(
+            f"[x-tuning] Service '{service_name}' has hardcoded memory bounds in command/entrypoint; "
+            "marking as unoptimizable."
         )
 
     return result
@@ -797,18 +1022,88 @@ def _walk_strings(value: Any) -> list[str]:
 
 def _inject_missing_defaults(contexts: list[ServiceContext], profiles: dict[str, Any]) -> None:
     for service in contexts:
-        defaults = profiles["tiers"][service.tier]["default_max_variables"]
-        for key, value in defaults.items():
-            if _read_env_number(service.node, key) is None:
-                _write_env_value(service.node, key, value)
+        tier_config = profiles["tiers"][service.tier]
+        defaults = tier_config["default_max_variables"]
+        aliases_map = tier_config.get("variable_aliases", {})
+        for canonical_key, default_value in defaults.items():
+            # Skip injection when the canonical variable OR any of its synonyms
+            # is already present — the service already configures this knob.
+            all_candidates = [canonical_key] + aliases_map.get(canonical_key, [])
+            if all(_read_env_number(service.node, c) is None for c in all_candidates):
+                _write_env_value(service.node, canonical_key, default_value)
 
 
 def _primary_variable_name(tier: str) -> str | None:
+    """Return the *canonical* primary variable name for a tier, or None."""
     return {
         "database": "max_connections",
         "backend_hybrid": "WORKERS",
         "cache": "maxmemory",
     }.get(tier)
+
+
+def _resolve_variable(service_node: Any, canonical_name: str, tier_config: dict) -> str:
+    """Return the first environment variable present in *service_node* from the
+    canonical name and its configured aliases, or *canonical_name* itself when
+    none is set (enabling downstream default injection).
+    """
+    aliases = tier_config.get("variable_aliases", {}).get(canonical_name, [])
+    for candidate in [canonical_name] + list(aliases):
+        if _read_env_number(service_node, candidate) is not None:
+            return candidate
+    return canonical_name
+
+
+def _resolve_primary_variable(service: ServiceContext, profiles: dict[str, Any]) -> str | None:
+    """Return the actual environment variable name to tune for *service*.
+
+    Priority order:
+    1. ``x-tuning.target_variable`` override (absolute precedence)
+    2. Canonical primary variable or the first alias found in the environment
+    3. ``None`` when the tier has no primary variable
+    """
+    if service.xtuning_target_variable:
+        return service.xtuning_target_variable
+    canonical = _primary_variable_name(service.tier)
+    if canonical is None:
+        return None
+    tier_config = profiles["tiers"][service.tier]
+    return _resolve_variable(service.node, canonical, tier_config)
+
+
+def _resolve_secondary_variable(service: ServiceContext, profiles: dict[str, Any]) -> str | None:
+    """For ``backend_hybrid`` services, return the resolved secondary variable
+    (WEB_CONCURRENCY or its alias) after the primary is exhausted.
+    Returns ``None`` for tiers without a secondary tuning variable.
+    """
+    if service.tier != "backend_hybrid":
+        return None
+    tier_config = profiles["tiers"][service.tier]
+    return _resolve_variable(service.node, "WEB_CONCURRENCY", tier_config)
+
+
+def _resolve_floor_value(service: ServiceContext, resolved_variable_name: str, profiles: dict[str, Any]) -> float | None:
+    """Look up the floor value for a resolved (possibly aliased) variable name.
+
+    Floor entries are always keyed by canonical name, so this function maps an
+    alias back to its canonical before looking up the floor.
+    """
+    tier = service.tier
+    floor_vars = profiles["floors"][tier]["variables"]
+    # Direct hit: resolved name IS the canonical.
+    if resolved_variable_name in floor_vars:
+        return floor_vars[resolved_variable_name]
+    # Indirect hit: resolved name is an alias — walk the alias table.
+    tier_config = profiles["tiers"][tier]
+    for canon, alias_list in tier_config.get("variable_aliases", {}).items():
+        if resolved_variable_name in alias_list and canon in floor_vars:
+            return floor_vars[canon]
+    # Custom x-tuning override: fall back to the tier's canonical primary floor.
+    if resolved_variable_name == service.xtuning_target_variable:
+        canonical_primary = _primary_variable_name(tier)
+        if canonical_primary in floor_vars:
+            return floor_vars[canonical_primary]
+    return None
 
 
 def _read_env_number(service: Any, key: str) -> float | None:
@@ -876,23 +1171,30 @@ def _service_ram(
     profiles: dict[str, Any],
     storage_type: str = "",
 ) -> float:
-    tier_config = profiles["tiers"][service.tier]
     replicas = service.replicas
+    if service.xtuning_hardcoded_ram_mb is not None:
+        return service.xtuning_hardcoded_ram_mb * replicas
+
+    tier_config = profiles["tiers"][service.tier]
     is_hdd = storage_type == "HDD"
     if service.tier == "database":
-        max_connections = _read_env_number(service.node, "max_connections")
+        var = _resolve_variable(service.node, "max_connections", tier_config)
+        max_connections = _read_env_number(service.node, var)
         max_connections = max_connections if max_connections is not None else 100
         if is_hdd:
             max_connections = min(max_connections, _HDD_MAX_CONNECTIONS_CEIL)
         return (128.0 + (max_connections * 15.0)) * replicas
     if service.tier == "backend_hybrid":
-        workers = _read_env_number(service.node, "WORKERS")
+        workers_var = _resolve_variable(service.node, "WORKERS", tier_config)
+        workers = _read_env_number(service.node, workers_var)
         workers = workers if workers is not None else 4
-        web_concurrency = _read_env_number(service.node, "WEB_CONCURRENCY")
+        web_var = _resolve_variable(service.node, "WEB_CONCURRENCY", tier_config)
+        web_concurrency = _read_env_number(service.node, web_var)
         web_concurrency = web_concurrency if web_concurrency is not None else 4
         return (64.0 + (workers * 32.0) + (web_concurrency * 48.0)) * replicas
     if service.tier == "cache":
-        maxmemory = _read_env_number(service.node, "maxmemory")
+        var = _resolve_variable(service.node, "maxmemory", tier_config)
+        maxmemory = _read_env_number(service.node, var)
         maxmemory = maxmemory if maxmemory is not None else 256
         if is_hdd:
             maxmemory = min(maxmemory, _HDD_MAXMEMORY_CEIL)
@@ -903,19 +1205,22 @@ def _service_ram(
 def _service_cpu(service: ServiceContext, profiles: dict[str, Any]) -> float:
     tier_config = profiles["tiers"][service.tier]
     base_cpu = tier_config["base_cpu"] * service.replicas
-    variable_name = _primary_variable_name(service.tier)
-    if not variable_name:
+    canonical = _primary_variable_name(service.tier)
+    if not canonical:
         return base_cpu
 
-    default_value = tier_config["default_max_variables"].get(variable_name)
+    # Resolve to whichever variable name is actually set in the environment.
+    variable_name = _resolve_variable(service.node, canonical, tier_config)
+    default_value = tier_config["default_max_variables"].get(canonical)
     current_value = _read_env_number(service.node, variable_name)
     if not default_value or current_value is None:
         return base_cpu
 
     cpu_scale = current_value / default_value
     if service.tier == "backend_hybrid":
+        web_var = _resolve_variable(service.node, "WEB_CONCURRENCY", tier_config)
         web_default = tier_config["default_max_variables"].get("WEB_CONCURRENCY")
-        web_value = _read_env_number(service.node, "WEB_CONCURRENCY")
+        web_value = _read_env_number(service.node, web_var)
         if web_default and web_value is not None:
             cpu_scale = (cpu_scale + (web_value / web_default)) / 2
 
@@ -939,8 +1244,12 @@ def _at_floor(
     effective_floor_mb = base_floor_mb * floor_strictness
     if service.current_ram_mb <= effective_floor_mb * service.replicas:
         return True
-    for variable_name, floor_value in floor["variables"].items():
-        current_value = _read_env_number(service.node, variable_name)
+    for canonical_var, floor_value in floor["variables"].items():
+        # Resolve to the actual environment variable (canonical or alias) so
+        # services using non-standard names are correctly floor-detected.
+        tier_config = profiles["tiers"][service.tier]
+        resolved_var = _resolve_variable(service.node, canonical_var, tier_config)
+        current_value = _read_env_number(service.node, resolved_var)
         if current_value is not None and current_value > floor_value:
             return False
     return bool(floor["variables"])
@@ -967,8 +1276,9 @@ def _inject_cgroups(
     overflow = max(0.0, active_footprint - effective_free_ram)
 
     # Partition services into those eligible for cgroup limits and those exempt.
-    exempt = [s for s in contexts if s.xtuning_never_cgroup]
-    eligible = [s for s in contexts if not s.xtuning_never_cgroup]
+    # A service is exempt if never_cgroup is true OR it is not optimizable.
+    exempt = [s for s in contexts if s.xtuning_never_cgroup or not s.xtuning_optimizable]
+    eligible = [s for s in contexts if not s.xtuning_never_cgroup and s.xtuning_optimizable]
 
     eligible_footprint = sum(s.current_ram_mb for s in eligible)
 
