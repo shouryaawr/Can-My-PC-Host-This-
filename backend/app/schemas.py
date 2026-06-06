@@ -52,6 +52,7 @@ class OptimizationMetrics(BaseModel):
     final_predicted_ram_mb: float
     ram_margin_mb: float
     cpu_saturation_pct: float
+    free_ram_mb: float
 
 
 class AnalyzeResponse(BaseModel):

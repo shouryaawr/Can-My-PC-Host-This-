@@ -71,6 +71,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             yaml_string=payload.yaml_string,
             trace=["[Validate] Host hardware payload is not usable."],
             warnings=warnings,
+            free_ram_mb=payload.host_hardware.free_ram_mb,
         )
 
     # Sanitize RAM inputs: absorb any floating-point micro-drift from the
@@ -95,6 +96,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             yaml_string=payload.yaml_string,
             trace=[f"[Manifest] Could not parse YAML: {exc}"],
             warnings=warnings,
+            free_ram_mb=payload.host_hardware.free_ram_mb,
         )
 
     # Null-serialization pass: round-trip the unmutated document tree through
@@ -112,6 +114,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             yaml_string=payload.yaml_string,
             trace=["[Manifest] No services found in manifest."],
             warnings=warnings,
+            free_ram_mb=payload.host_hardware.free_ram_mb,
         )
 
     service_order = sorted(services)
@@ -151,6 +154,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             ],
             warnings=warnings,
             services=contexts,
+            free_ram_mb=payload.host_hardware.free_ram_mb,
         )
 
     profile = _host_profile(payload.selected_profile, profiles, trace, payload.custom_profile_config)
@@ -328,6 +332,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
                     cpu_saturation_pct=(sum(s.cpu for s in contexts) / cpu_budget * 100)
                     if cpu_budget
                     else 0.0,
+                    free_ram_mb=payload.host_hardware.free_ram_mb,
                 ),
                 services=[
                     ServiceAnalysisResult(
@@ -380,6 +385,12 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
     elif final_m_gap > 0 or final_c_gap > 0:
         status = "UNSOLVABLE"
 
+    # Narrow-margin safety boundary: even when the layout technically fits,
+    # a margin below 64 MB leaves almost no headroom for runtime variance.
+    # Degrade the status to signal the host is critically tight on memory.
+    if status == "FULLY_SOLVED" and (effective_free_ram - final_predicted_ram) < 64:
+        status = "DEGRADED_SAFE"
+
     optimized_yaml = _dump_yaml(yaml, document)
 
 
@@ -393,6 +404,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             final_predicted_ram_mb=final_predicted_ram,
             ram_margin_mb=effective_free_ram - final_predicted_ram,
             cpu_saturation_pct=(final_cpu / cpu_budget * 100) if cpu_budget else 0.0,
+            free_ram_mb=payload.host_hardware.free_ram_mb,
         ),
         services=[
             ServiceAnalysisResult(
@@ -1125,6 +1137,7 @@ def _response(
     warnings: list[str],
     services: list[ServiceContext] | None = None,
     baseline_yaml_string: str = "",
+    free_ram_mb: float = 0.0,
 ) -> AnalyzeResponse:
     service_contexts = services or []
     return AnalyzeResponse(
@@ -1137,6 +1150,7 @@ def _response(
             final_predicted_ram_mb=sum(service.final_ram_mb for service in service_contexts),
             ram_margin_mb=0.0,
             cpu_saturation_pct=0.0,
+            free_ram_mb=free_ram_mb,
         ),
         services=[
             ServiceAnalysisResult(

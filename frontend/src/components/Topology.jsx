@@ -148,9 +148,9 @@ function SubordinateAccordion({ mutations }) {
         <div className="mt-2 space-y-2">
           {mutations.map(([key, value]) => {
             const cfg = MUTATION_CONFIG[key];
-            const fromVal = value != null && typeof value === "object" ? Math.round(Number(value.from_val)) : Math.round(Number(value));
-            const toVal   = value != null && typeof value === "object" ? Math.round(Number(value.to_val))   : Math.round(Number(value));
-            const hasDetail = value != null && typeof value === "object" && "from_val" in value && "to_val" in value;
+            const fromVal = value != null && typeof value === "object" ? Math.round(Number(value.from)) : Math.round(Number(value));
+            const toVal   = value != null && typeof value === "object" ? Math.round(Number(value.to))   : Math.round(Number(value));
+            const hasDetail = value != null && typeof value === "object" && "from" in value && "to" in value;
             return (
               <div
                 key={key}
@@ -287,8 +287,8 @@ function ServiceCard({ service }) {
           <div className="flex items-baseline gap-2">
             <span className="w-12 shrink-0 text-[10px] uppercase tracking-wide text-zinc-500">key</span>
             <span className="font-mono text-[10px] text-zinc-300">
-              {dominantKey !== undefined && dominantValue != null && typeof dominantValue === "object" && "from_val" in dominantValue
-                ? `${dominantKey}: ${Math.round(Number(dominantValue.from_val))} → ${Math.round(Number(dominantValue.to_val))}`
+              {dominantKey !== undefined && dominantValue != null && typeof dominantValue === "object" && "from" in dominantValue
+                ? `${dominantKey}: ${Math.round(Number(dominantValue.from))} → ${Math.round(Number(dominantValue.to))}`
                 : dominantKey}
             </span>
           </div>
