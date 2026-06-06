@@ -102,7 +102,7 @@ py -3 -m venv .venv
 If the process still stalls, retry with a clean venv and install pip manually after activation:
 ```powershell
 py -3 -m venv .venv --without-pip
-.venv\Scripts\activate
+.\.venv\Scripts\activate
 python -m ensurepip --upgrade
 ```
 
@@ -110,8 +110,9 @@ python -m ensurepip --upgrade
 
 *On Windows:*
 ```powershell
-.venv\Scripts\activate
+.\.venv\Scripts\activate
 ```
+*(If using Command Prompt, use `.venv\Scripts\activate.bat` instead)*
 
 *On macOS/Linux:*
 ```bash
@@ -127,7 +128,7 @@ uvicorn app.main:app --reload
 
 ### 3. Launching the Frontend
 
-Ensure you have Node.js 18+ installed. Open a new terminal window.
+Ensure you have Node.js 18+ installed. Open a new terminal window and make sure you are in the project root (`Can-My-PC-Host-This-`).
 
 ```bash
 cd frontend
