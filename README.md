@@ -88,20 +88,27 @@ cd Can-My-PC-Host-This-
 ### 2. Launching the Analysis Backend
 Ensure you have Python 3.10+ installed.
 
+First, navigate to the backend directory and create a virtual environment:
 ```bash
 cd backend
 python -m venv .venv
+```
 
-# Activate the virtual environment
-# Windows:
+**Activate the virtual environment:**
+
+*On Windows:*
+```powershell
 .venv\Scripts\activate
-# macOS/Linux:
+```
+
+*On macOS/Linux:*
+```bash
 source .venv/bin/activate
+```
 
-# Install core dependencies
+**Install dependencies and boot the server:**
+```bash
 pip install -r requirements.txt
-
-# Boot the FastAPI server
 uvicorn app.main:app --reload
 ```
 > **Backend Port**: By default, the FastAPI server runs on `http://localhost:8000`.
