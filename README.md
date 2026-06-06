@@ -31,8 +31,8 @@ Built for developers who want to run heavy local deployments without freezing th
 **Deterministic Optimization Engine**
 Say goodbye to Out-Of-Memory (OOM) kills. The engine calculates predicted RAM and CPU utilization for every service in your manifest and injects hard limits (`deploy.resources.limits`) and soft reservations (`deploy.resources.reservations`) based on mathematical models of your hardware capacity.
 
-**Instant Hardware Auto-Detection**
-No more manual entry. The dashboard leverages browser APIs to instantly detect your logical CPU cores and total system memory, accurately calculating safe buffer zones. Running on a different machine? You can easily override this with custom hardware specs.
+**Hardware Auto-Detection & Manual Override**
+Since browsers restrict access to exact device specifications for security, the dashboard leverages available browser APIs to fetch the closest approximation of your logical CPU cores and total system memory. For precise tuning, we provide a manual edit button so you can easily override these estimates and input your exact hardware specs or simulate a different machine.
 
 **Tailored Operational Profiles**
 Not all workloads are created equal. Choose a profile that fits your exact use-case:
