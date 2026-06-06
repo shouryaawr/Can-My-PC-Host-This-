@@ -627,23 +627,18 @@ export default function App() {
   });
 
 
-  const loadHardware = useCallback(async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/hardware`);
-      if (!response.ok) throw new Error(`Hardware request failed with ${response.status}`);
-      const data = await response.json();
-      // Ingestion interceptor: convert binary MB → decimal GB (÷1024, 1dp) → decimal MB (×1000)
-      const totalGb = Number((data.total_ram_mb / 1024).toFixed(1));
-      const freeGb  = Number((data.free_ram_mb  / 1024).toFixed(1));
-      setHardwareData({
-        ...data,
-        total_ram_mb: Math.round(totalGb * 1000),
-        free_ram_mb:  Math.round(freeGb  * 1000),
-      });
-      setHardwareSource("system");
-    } catch {
-      // silently fail hardware detection
-    }
+  const loadHardware = useCallback(() => {
+    const cpuCores   = navigator.hardwareConcurrency || DEFAULT_HARDWARE.cpu_cores;
+    const totalRamMb = Math.round((navigator.deviceMemory || (DEFAULT_HARDWARE.total_ram_mb / 1000)) * 1000);
+    const freeRamMb  = Math.round(totalRamMb * 0.75);
+
+    setHardwareData({
+      cpu_cores:    cpuCores,
+      total_ram_mb: totalRamMb,
+      free_ram_mb:  freeRamMb,
+      storage_type: "SSD",
+    });
+    setHardwareSource("system");
   }, []);
 
   useEffect(() => {
