@@ -261,11 +261,21 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
     c_predicted = sum(service.cpu for service in contexts)
     m_gap = m_predicted - effective_free_ram
     c_gap = c_predicted - cpu_budget
-    trace.append(
-        "[Baseline] Services need "
-        f"{round(m_predicted, 1)}MB RAM and {round(c_predicted, 2)} CPU; "
-        f"host gaps are {round(m_gap, 1)}MB RAM and {round(c_gap, 2)} CPU."
-    )
+    
+    if m_gap <= 0 and c_gap <= 0:
+        m_budget = effective_free_ram - m_predicted
+        c_budget = cpu_budget - c_predicted
+        trace.append(
+            "[Baseline] Services need "
+            f"{round(m_predicted, 1)}MB RAM and {round(c_predicted, 2)} CPU; "
+            f"Available Safety Margin is {round(m_budget, 1)}MB RAM and {round(c_budget, 2)} CPU."
+        )
+    else:
+        trace.append(
+            "[Baseline] Services need "
+            f"{round(m_predicted, 1)}MB RAM and {round(c_predicted, 2)} CPU; "
+            f"host gaps are {round(m_gap, 1)}MB RAM and {round(c_gap, 2)} CPU."
+        )
 
                                                                                
                                                                            
@@ -378,72 +388,80 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             trace.append("[Optimize] No more service knobs can be lowered safely.")
             break
 
-                                                                 
-    if m_gap > 0 or c_gap > 0:
-        if not allow_cgroups:
+    tuning_m_gap = m_gap
+    tuning_c_gap = c_gap
+
+    if (tuning_m_gap > 0 or tuning_c_gap > 0) and not allow_cgroups:
                                                                             
                                                                    
-            trace.append(
-                "[Safety] Cgroup injection is disabled by the custom profile configuration; "
-                "cannot fit services within host capacity."
-            )
-            optimized_yaml = _dump_yaml(yaml, document)
+        trace.append(
+            "[Safety] Cgroup injection is disabled by the custom profile configuration; "
+            "cannot fit services within host capacity."
+        )
+        optimized_yaml = _dump_yaml(yaml, document)
 
 
-            return AnalyzeResponse(
-                status="UNSOLVABLE",
-                optimized_yaml_string=optimized_yaml,
-                optimized_yaml=optimized_yaml,
-                baseline_yaml_string=baseline_yaml_string,
-                metrics=OptimizationMetrics(
-                    initial_predicted_ram_mb=initial_predicted_ram,
-                    final_predicted_ram_mb=sum(s.final_ram_mb for s in contexts),
-                    ram_margin_mb=effective_free_ram - sum(s.final_ram_mb for s in contexts),
-                    cpu_saturation_pct=(sum(s.cpu for s in contexts) / cpu_budget * 100)
-                    if cpu_budget
-                    else 0.0,
-                    free_ram_mb=payload.host_hardware.free_ram_mb,
-                ),
-                services=[
-                    ServiceAnalysisResult(
-                        name=service.name,
-                        tier=service.tier,
-                        replicas=service.replicas,
-                        initial_ram_mb=service.initial_ram_mb,
-                        final_ram_mb=service.final_ram_mb,
-                        variables_mutated=service.variables_mutated,
-                        cgroups_injected=service.cgroups_injected,
-                        at_floor=_at_floor(service, profiles, floor_strictness),
-                    )
-                    for service in contexts
-                ],
-                topology=[
-                    ServiceAnalysisResult(
-                        name=service.name,
-                        tier=service.tier,
-                        replicas=service.replicas,
-                        initial_ram_mb=service.initial_ram_mb,
-                        final_ram_mb=service.final_ram_mb,
-                        variables_mutated=service.variables_mutated,
-                        cgroups_injected=service.cgroups_injected,
-                        at_floor=_at_floor(service, profiles, floor_strictness),
-                    )
-                    for service in contexts
-                ],
-                warnings=warnings,
-                execution_trace=trace,
-                trace_log=trace,
-            )
-        cgroups_used = _inject_cgroups(contexts, profiles, c_gap, effective_free_ram)
+        return AnalyzeResponse(
+            status="UNSOLVABLE",
+            optimized_yaml_string=optimized_yaml,
+            optimized_yaml=optimized_yaml,
+            baseline_yaml_string=baseline_yaml_string,
+            metrics=OptimizationMetrics(
+                initial_predicted_ram_mb=initial_predicted_ram,
+                final_predicted_ram_mb=sum(s.final_ram_mb for s in contexts),
+                ram_margin_mb=effective_free_ram - sum(s.final_ram_mb for s in contexts),
+                cpu_saturation_pct=(sum(s.cpu for s in contexts) / cpu_budget * 100)
+                if cpu_budget
+                else 0.0,
+                free_ram_mb=payload.host_hardware.free_ram_mb,
+            ),
+            services=[
+                ServiceAnalysisResult(
+                    name=service.name,
+                    tier=service.tier,
+                    replicas=service.replicas,
+                    initial_ram_mb=service.initial_ram_mb,
+                    final_ram_mb=service.final_ram_mb,
+                    variables_mutated=service.variables_mutated,
+                    cgroups_injected=service.cgroups_injected,
+                    at_floor=_at_floor(service, profiles, floor_strictness),
+                )
+                for service in contexts
+            ],
+            topology=[
+                ServiceAnalysisResult(
+                    name=service.name,
+                    tier=service.tier,
+                    replicas=service.replicas,
+                    initial_ram_mb=service.initial_ram_mb,
+                    final_ram_mb=service.final_ram_mb,
+                    variables_mutated=service.variables_mutated,
+                    cgroups_injected=service.cgroups_injected,
+                    at_floor=_at_floor(service, profiles, floor_strictness),
+                )
+                for service in contexts
+            ],
+            warnings=warnings,
+            execution_trace=trace,
+            trace_log=trace,
+        )
+
+    if allow_cgroups:
+        cgroups_used = _inject_cgroups(contexts, profiles, tuning_c_gap, effective_free_ram)
         if cgroups_used:
             m_predicted = sum(service.final_ram_mb for service in contexts)
             c_predicted = sum(service.cpu for service in contexts)
             m_gap = m_predicted - effective_free_ram
             c_gap = c_predicted - cpu_budget
-            trace.append(
-                "[Safety] Added hard resource limits because tuning alone could not fit the host; "
-                f"remaining RAM gap is {round(m_gap, 1)}MB."
-            )
+            if tuning_m_gap > 0 or tuning_c_gap > 0:
+                trace.append(
+                    "[Safety] Added hard resource limits because tuning alone could not fit the host; "
+                    f"remaining RAM gap is {round(m_gap, 1)}MB."
+                )
+            else:
+                trace.append(
+                    "[Safety] Injected profile-based safety resource limits to prevent unbounded host access."
+                )
 
     final_predicted_ram = sum(service.final_ram_mb for service in contexts)
     final_cpu = sum(service.cpu for service in contexts)
@@ -1337,12 +1355,33 @@ def _inject_cgroups(
         budgeted_service_ram = service.current_ram_mb - reduction_share
         limit_mb = max(budgeted_service_ram / service.replicas, floor_ram)
         service.final_ram_mb = limit_mb * service.replicas
-        _write_resource_limit(service.node, "memory", f"{int(limit_mb)}M")
-        if c_gap > 0:
-            cpu_limit = max(0.05, service.cpu / service.replicas)
-            _write_resource_limit(service.node, "cpus", round(cpu_limit, 2))
-        service.cgroups_injected = True
-        injected = True
+        
+        mem_limit_str = f"{int(limit_mb)}M"
+        
+        already_has_limits = False
+        deploy = service.node.get("deploy")
+        if isinstance(deploy, dict):
+            resources = deploy.get("resources")
+            if isinstance(resources, dict):
+                limits = resources.get("limits")
+                if isinstance(limits, dict):
+                    existing_mem = limits.get("memory")
+                    if str(existing_mem) == mem_limit_str:
+                        if c_gap > 0:
+                            existing_cpu = limits.get("cpus")
+                            cpu_limit = round(max(0.05, service.cpu / service.replicas), 2)
+                            if str(existing_cpu) == str(cpu_limit):
+                                already_has_limits = True
+                        else:
+                            already_has_limits = True
+
+        if not already_has_limits:
+            _write_resource_limit(service.node, "memory", mem_limit_str)
+            if c_gap > 0:
+                cpu_limit = max(0.05, service.cpu / service.replicas)
+                _write_resource_limit(service.node, "cpus", round(cpu_limit, 2))
+            service.cgroups_injected = True
+            injected = True
 
                                                                               
                                                                               
