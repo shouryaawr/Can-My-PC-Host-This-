@@ -313,6 +313,8 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
     # Fallback to safety boundaries if we are still over capacity
     if m_gap > 0 or c_gap > 0:
         if not allow_cgroups:
+            # With cgroup injection disabled, any remaining gap (RAM or CPU)
+            # means we cannot fit the services — always UNSOLVABLE.
             trace.append(
                 "[Safety] Cgroup injection is disabled by the custom profile configuration; "
                 "cannot fit services within host capacity."
@@ -664,8 +666,8 @@ def _safe_image_lookup_table(profiles: dict[str, Any]) -> dict[str, Any]:
 def _extract_services(document: Any) -> dict[str, Any]:
     if isinstance(document, dict) and isinstance(document.get("services"), dict):
         return document["services"]
-    if isinstance(document, dict):
-        return document
+    # Strictly require a `services` block — never fall back to treating top-level
+    # YAML keys (e.g. `version`, `volumes`) as service definitions.
     return {}
 
 
@@ -728,12 +730,23 @@ def _classify_service(
     service_name: str | None = None,
     trace: list[str] | None = None,
 ) -> str:
-    strings = [item.lower() for item in _walk_strings(service)]
-    for value in strings:
-        if "compiler.tier" in value:
-            for tier_name in profiles["tiers"].keys():
-                if tier_name in value:
-                    return tier_name
+    # --- Explicit tier via compiler.tier label ---
+    # Walk the labels block directly (dict or list form) so we reliably match the
+    # label KEY ("compiler.tier") against the tier VALUE (e.g. "database").
+    if isinstance(service, dict):
+        labels = service.get("labels", {})
+        if isinstance(labels, dict):
+            for label_key, label_val in labels.items():
+                if str(label_key).lower() == "compiler.tier":
+                    candidate = str(label_val).strip().lower()
+                    if candidate in profiles.get("tiers", {}):
+                        return candidate
+        elif isinstance(labels, list):
+            for item in labels:
+                if isinstance(item, str) and item.lower().startswith("compiler.tier="):
+                    candidate = item.split("=", 1)[1].strip().lower()
+                    if candidate in profiles.get("tiers", {}):
+                        return candidate
 
     image = str(service.get("image", "") if isinstance(service, dict) else "").lower()
     for image_fragment, tier in _safe_image_lookup_table(profiles).items():
@@ -744,12 +757,13 @@ def _classify_service(
     if isinstance(service, dict) and service.get("ports"):
         return "backend_hybrid"
 
-    # Keyword detection = lowest priority
-    # Use regex tokenization so compound names like "celery-worker", "workerProcess",
-    # "WORKERS", and "queue_handler" are correctly decomposed into atomic words.
-    service_text = " ".join(
-        str(v) for v in service.values()
-    ) if isinstance(service, dict) else str(service)
+    # Keyword detection = lowest priority.
+    # Include the service *name* in the token scan — compound names like
+    # "celery_worker", "celery-worker", or "workerProcess" must be detected
+    # even when the service body itself contains no matching keywords.
+    name_part = service_name or ""
+    body_parts = " ".join(str(v) for v in service.values()) if isinstance(service, dict) else str(service)
+    service_text = f"{name_part} {body_parts}"
 
     tokens = set(re.findall(r"[A-Za-z]+", service_text.lower()))
 
