@@ -94,6 +94,18 @@ cd backend
 python -m venv .venv
 ```
 
+If the `venv` creation hangs or fails during `ensurepip`, try the Windows launcher instead:
+```powershell
+py -3 -m venv .venv
+```
+
+If the process still stalls, retry with a clean venv and install pip manually after activation:
+```powershell
+py -3 -m venv .venv --without-pip
+.venv\Scripts\activate
+python -m ensurepip --upgrade
+```
+
 **Activate the virtual environment:**
 
 *On Windows:*
