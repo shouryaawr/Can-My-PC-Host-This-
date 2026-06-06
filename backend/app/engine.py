@@ -213,12 +213,12 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
     storage_type = payload.host_hardware.storage_type
     _inject_missing_defaults(contexts, profiles)
     _recalculate(contexts, profiles, storage_type)
-    initial_predicted_ram = sum(service.current_ram_mb for service in contexts)
+    initial_predicted_ram = sum(service.current_ram_mb * service.replicas for service in contexts)
 
                                                                               
                                                                        
     for service in contexts:
-        if not service.xtuning_optimizable and service.current_ram_mb > payload.host_hardware.free_ram_mb:
+        if not service.xtuning_optimizable and (service.current_ram_mb * service.replicas) > payload.host_hardware.free_ram_mb:
             return _response(
                 status="UNSOLVABLE",
                 yaml_string=_dump_yaml(yaml, document),
@@ -257,8 +257,8 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
         service.final_ram_mb = service.current_ram_mb
         service.cpu = _service_cpu(service, profiles)
 
-    m_predicted = sum(service.current_ram_mb for service in contexts)
-    c_predicted = sum(service.cpu for service in contexts)
+    m_predicted = sum(service.current_ram_mb * service.replicas for service in contexts)
+    c_predicted = sum(service.cpu * service.replicas for service in contexts)
     m_gap = m_predicted - effective_free_ram
     c_gap = c_predicted - cpu_budget
     
@@ -316,8 +316,8 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
                 service.current_ram_mb = _service_ram(service, profiles, storage_type)
                 service.final_ram_mb = service.current_ram_mb
                 service.cpu = _service_cpu(service, profiles)
-                m_predicted = sum(item.current_ram_mb for item in contexts)
-                c_predicted = sum(item.cpu for item in contexts)
+                m_predicted = sum(item.current_ram_mb * item.replicas for item in contexts)
+                c_predicted = sum(item.cpu * item.replicas for item in contexts)
                 m_gap = m_predicted - effective_free_ram
                 c_gap = c_predicted - cpu_budget
                 changes += 1
@@ -360,8 +360,8 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             service.current_ram_mb = _service_ram(service, profiles, storage_type)
             service.final_ram_mb = service.current_ram_mb
             service.cpu = _service_cpu(service, profiles)
-            m_predicted = sum(item.current_ram_mb for item in contexts)
-            c_predicted = sum(item.cpu for item in contexts)
+            m_predicted = sum(item.current_ram_mb * item.replicas for item in contexts)
+            c_predicted = sum(item.cpu * item.replicas for item in contexts)
             m_gap = m_predicted - effective_free_ram
             c_gap = c_predicted - cpu_budget
             changes += 1
@@ -408,9 +408,9 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
             baseline_yaml_string=baseline_yaml_string,
             metrics=OptimizationMetrics(
                 initial_predicted_ram_mb=initial_predicted_ram,
-                final_predicted_ram_mb=sum(s.final_ram_mb for s in contexts),
-                ram_margin_mb=effective_free_ram - sum(s.final_ram_mb for s in contexts),
-                cpu_saturation_pct=(sum(s.cpu for s in contexts) / cpu_budget * 100)
+                final_predicted_ram_mb=sum(s.final_ram_mb * s.replicas for s in contexts),
+                ram_margin_mb=effective_free_ram - sum(s.final_ram_mb * s.replicas for s in contexts),
+                cpu_saturation_pct=(sum(s.cpu * s.replicas for s in contexts) / cpu_budget * 100)
                 if cpu_budget
                 else 0.0,
                 free_ram_mb=payload.host_hardware.free_ram_mb,
@@ -463,8 +463,8 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
                     "[Safety] Injected profile-based safety resource limits to prevent unbounded host access."
                 )
 
-    final_predicted_ram = sum(service.final_ram_mb for service in contexts)
-    final_cpu = sum(service.cpu for service in contexts)
+    final_predicted_ram = sum(service.final_ram_mb * service.replicas for service in contexts)
+    final_cpu = sum(service.cpu * service.replicas for service in contexts)
     final_m_gap = final_predicted_ram - effective_free_ram
     final_c_gap = final_cpu - cpu_budget
     status: Literal["FULLY_SOLVED", "DEGRADED_SAFE", "UNSOLVABLE", "INVALID_MANIFEST", "UNSUPPORTED_ORCHESTRATOR"] = "FULLY_SOLVED"
@@ -502,8 +502,8 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
                             break
 
         if service.cgroups_injected:
-            mem_limit = f"{int(service.final_ram_mb / service.replicas)}M"
-            cpu_limit = round(max(0.05, service.cpu / service.replicas), 2)
+            mem_limit = f"{int(service.final_ram_mb)}M"
+            cpu_limit = round(max(0.05, service.cpu), 2)
             patches.append(PatchCoord(
                 op="set",
                 path=["services", service.name, "deploy", "resources", "limits", "memory"],
@@ -1210,9 +1210,8 @@ def _service_ram(
     profiles: dict[str, Any],
     storage_type: str = "",
 ) -> float:
-    replicas = service.replicas
     if service.xtuning_hardcoded_ram_mb is not None:
-        return service.xtuning_hardcoded_ram_mb * replicas
+        return service.xtuning_hardcoded_ram_mb
 
     tier_config = profiles["tiers"][service.tier]
     is_hdd = storage_type == "HDD"
@@ -1222,7 +1221,7 @@ def _service_ram(
         max_connections = max_connections if max_connections is not None else 100
         if is_hdd:
             max_connections = min(max_connections, _HDD_MAX_CONNECTIONS_CEIL)
-        return (128.0 + (max_connections * 15.0)) * replicas
+        return 128.0 + (max_connections * 15.0)
     if service.tier == "backend_hybrid":
         workers_var = _resolve_variable(service.node, "WORKERS", tier_config)
         workers = _read_env_number(service.node, workers_var)
@@ -1230,20 +1229,20 @@ def _service_ram(
         web_var = _resolve_variable(service.node, "WEB_CONCURRENCY", tier_config)
         web_concurrency = _read_env_number(service.node, web_var)
         web_concurrency = web_concurrency if web_concurrency is not None else 4
-        return (64.0 + (workers * 32.0) + (web_concurrency * 48.0)) * replicas
+        return 64.0 + (workers * 32.0) + (web_concurrency * 48.0)
     if service.tier == "cache":
         var = _resolve_variable(service.node, "maxmemory", tier_config)
         maxmemory = _read_env_number(service.node, var)
         maxmemory = maxmemory if maxmemory is not None else 256
         if is_hdd:
             maxmemory = min(maxmemory, _HDD_MAXMEMORY_CEIL)
-        return (16.0 + maxmemory) * replicas
-    return tier_config["base_ram_mb"] * replicas
+        return 16.0 + maxmemory
+    return tier_config["base_ram_mb"]
 
 
 def _service_cpu(service: ServiceContext, profiles: dict[str, Any]) -> float:
     tier_config = profiles["tiers"][service.tier]
-    base_cpu = tier_config["base_cpu"] * service.replicas
+    base_cpu = tier_config["base_cpu"]
     canonical = _primary_variable_name(service.tier)
     if not canonical:
         return base_cpu
@@ -1281,7 +1280,7 @@ def _at_floor(
                                                                      
                                                                          
     effective_floor_mb = base_floor_mb * floor_strictness
-    if service.current_ram_mb <= effective_floor_mb * service.replicas:
+    if service.current_ram_mb <= effective_floor_mb:
         return True
     for canonical_var, floor_value in floor["variables"].items():
                                                                             
@@ -1310,7 +1309,7 @@ def _inject_cgroups(
     c_gap: float,
     effective_free_ram: float,
 ) -> bool:
-    active_footprint = sum(service.current_ram_mb for service in contexts)
+    active_footprint = sum(service.current_ram_mb * service.replicas for service in contexts)
     overflow = max(0.0, active_footprint - effective_free_ram)
 
                                                                                 
@@ -1318,7 +1317,7 @@ def _inject_cgroups(
     exempt = [s for s in contexts if s.xtuning_never_cgroup or not s.xtuning_optimizable]
     eligible = [s for s in contexts if not s.xtuning_never_cgroup and s.xtuning_optimizable]
 
-    eligible_footprint = sum(s.current_ram_mb for s in eligible)
+    eligible_footprint = sum(s.current_ram_mb * s.replicas for s in eligible)
 
                                                                               
                                                                           
@@ -1326,11 +1325,11 @@ def _inject_cgroups(
         total_eligible_headroom = sum(
             max(
                 0.0,
-                s.current_ram_mb - (
+                (s.current_ram_mb - (
                     s.xtuning_ram_floor_mb
                     if s.xtuning_ram_floor_mb is not None
                     else profiles["floors"][s.tier]["ram_mb"]
-                ) * s.replicas,
+                )) * s.replicas,
             )
             for s in eligible
         )
@@ -1348,13 +1347,13 @@ def _inject_cgroups(
         )
                                                                              
         reduction_share = (
-            overflow * (service.current_ram_mb / eligible_footprint)
+            overflow * ((service.current_ram_mb * service.replicas) / eligible_footprint)
             if eligible_footprint
             else 0.0
         )
-        budgeted_service_ram = service.current_ram_mb - reduction_share
+        budgeted_service_ram = (service.current_ram_mb * service.replicas) - reduction_share
         limit_mb = max(budgeted_service_ram / service.replicas, floor_ram)
-        service.final_ram_mb = limit_mb * service.replicas
+        service.final_ram_mb = limit_mb
         
         mem_limit_str = f"{int(limit_mb)}M"
         
@@ -1369,7 +1368,7 @@ def _inject_cgroups(
                     if str(existing_mem) == mem_limit_str:
                         if c_gap > 0:
                             existing_cpu = limits.get("cpus")
-                            cpu_limit = round(max(0.05, service.cpu / service.replicas), 2)
+                            cpu_limit = round(max(0.05, service.cpu), 2)
                             if str(existing_cpu) == str(cpu_limit):
                                 already_has_limits = True
                         else:
@@ -1378,7 +1377,7 @@ def _inject_cgroups(
         if not already_has_limits:
             _write_resource_limit(service.node, "memory", mem_limit_str)
             if c_gap > 0:
-                cpu_limit = max(0.05, service.cpu / service.replicas)
+                cpu_limit = max(0.05, service.cpu)
                 _write_resource_limit(service.node, "cpus", round(cpu_limit, 2))
             service.cgroups_injected = True
             injected = True
@@ -1389,7 +1388,7 @@ def _inject_cgroups(
     for service in exempt:
         service.final_ram_mb = service.current_ram_mb
         if c_gap > 0:
-            cpu_limit = max(0.05, service.cpu / service.replicas)
+            cpu_limit = max(0.05, service.cpu)
             _write_resource_limit(service.node, "cpus", round(cpu_limit, 2))
 
     return injected
@@ -1533,8 +1532,8 @@ def _response(
         baseline_yaml_string=baseline_yaml_string or yaml_string,
         patches=[],
         metrics=OptimizationMetrics(
-            initial_predicted_ram_mb=sum(service.initial_ram_mb for service in service_contexts),
-            final_predicted_ram_mb=sum(service.final_ram_mb for service in service_contexts),
+            initial_predicted_ram_mb=sum(service.initial_ram_mb * service.replicas for service in service_contexts),
+            final_predicted_ram_mb=sum(service.final_ram_mb * service.replicas for service in service_contexts),
             ram_margin_mb=0.0,
             cpu_saturation_pct=0.0,
             free_ram_mb=free_ram_mb,
