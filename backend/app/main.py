@@ -31,7 +31,9 @@ GITHUB_REPO_PATTERN = re.compile(
 )
 
 
-def detect_storage_type() -> str:
+from typing import Literal
+
+def detect_storage_type() -> Literal["SSD", "HDD", "UNKNOWN"]:
     if sys.platform != "linux":
         return "SSD"
 

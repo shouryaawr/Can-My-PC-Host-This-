@@ -5,7 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
@@ -59,10 +59,6 @@ class ServiceContext:
     xtuning_target_variable: str | None = None
     xtuning_optimizable: bool = True
     xtuning_hardcoded_ram_mb: float | None = None
-
-
-import re
-
 # Matches hardcoded memory bounds often found in Java/Node.js entrypoints.
 # If these exist, environment tweaking is ignored by the runtime, so we
 # must flag the service as unoptimizable unless overridden.
@@ -275,7 +271,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
     cfg = payload.custom_profile_config
     iteration_cap = cfg.max_iterations if cfg is not None else MAX_ITERATIONS
     allow_cgroups = cfg.allow_cgroups if cfg is not None else True
-    floor_strictness = cfg.floor_strictness if cfg is not None else 1.0
+    floor_strictness = cfg.floor_strictness if (cfg is not None and cfg.floor_strictness is not None) else 1.0
 
     # Check host limits and scale down services if memory is tight
     cgroups_used = False
@@ -452,7 +448,7 @@ def run_optimization_engine(payload: AnalyzeRequest) -> AnalyzeResponse:
     final_cpu = sum(service.cpu for service in contexts)
     final_m_gap = final_predicted_ram - effective_free_ram
     final_c_gap = final_cpu - cpu_budget
-    status = "FULLY_SOLVED"
+    status: Literal["FULLY_SOLVED", "DEGRADED_SAFE", "UNSOLVABLE", "INVALID_MANIFEST", "UNSUPPORTED_ORCHESTRATOR"] = "FULLY_SOLVED"
     if cgroups_used and final_m_gap <= 0 and final_c_gap <= 0:
         status = "DEGRADED_SAFE"
     elif final_m_gap > 0 or final_c_gap > 0:
@@ -885,7 +881,7 @@ def _extract_xtuning(
 
     # ram_floor_mb — must be a positive number
     raw_floor = xtuning.get("ram_floor_mb")
-    if _is_json_number(raw_floor) and raw_floor > 0:
+    if isinstance(raw_floor, (int, float)) and not isinstance(raw_floor, bool) and raw_floor > 0:
         result["xtuning_ram_floor_mb"] = float(raw_floor)
         trace.append(
             f"[x-tuning] Service '{service_name}' overrides RAM floor to "
@@ -1002,22 +998,6 @@ def _classify_service(
     )
     return BACKEND_TIER_NAME
 
-
-def _walk_strings(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        items: list[str] = []
-        for key, child in value.items():
-            items.extend(_walk_strings(key))
-            items.extend(_walk_strings(child))
-        return items
-    if isinstance(value, list):
-        items = []
-        for child in value:
-            items.extend(_walk_strings(child))
-        return items
-    return []
 
 
 def _inject_missing_defaults(contexts: list[ServiceContext], profiles: dict[str, Any]) -> None:
@@ -1261,8 +1241,7 @@ def _record_mutation(
     existing = service.variables_mutated.get(variable_name)
     from_value = existing.from_val if existing else old_value
     service.variables_mutated[variable_name] = MutatedVariableDetail(
-        from_val=from_value,
-        to_val=new_value,
+        **{"from": from_value, "to": new_value}
     )
 
 
@@ -1455,7 +1434,7 @@ def _dump_yaml(yaml: YAML, document: Any) -> str:
 
 
 def _response(
-    status: str,
+    status: Literal["FULLY_SOLVED", "DEGRADED_SAFE", "UNSOLVABLE", "INVALID_MANIFEST", "UNSUPPORTED_ORCHESTRATOR"],
     yaml_string: str,
     trace: list[str],
     warnings: list[str],
