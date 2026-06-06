@@ -622,7 +622,7 @@ export default function App() {
 
   const loadHardware = useCallback(async () => {
     try {
-      const response = await fetch("/api/v1/hardware");
+      const response = await fetch(`${API_BASE_URL}/api/v1/hardware`);
       if (!response.ok) throw new Error(`Hardware request failed with ${response.status}`);
       const data = await response.json();
       // Ingestion interceptor: convert binary MB → decimal GB (÷1024, 1dp) → decimal MB (×1000)
@@ -684,7 +684,7 @@ export default function App() {
     let handledError = false;
 
     try {
-      const response = await fetch("/api/v1/fetch-manifest", {
+      const response = await fetch(`${API_BASE_URL}/api/v1/fetch-manifest`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ repo_url: githubUrl, manifest_path: manifestPath }),
@@ -752,7 +752,7 @@ export default function App() {
           : {}),
       };
 
-      const response = await fetch("/api/v1/analyze", {
+      const response = await fetch(`${API_BASE_URL}/api/v1/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(requestBody),
