@@ -70,3 +70,349 @@ Any service in your compose file can carry an `x-tuning` block to override solve
 ---
 
 ## Architecture
+
+
+
+```
+
+backend/app/
+
+├── main.py
+
+├── engine.py
+
+├── parser.py
+
+├── solver.py
+
+├── patcher.py
+
+├── schemas.py
+
+└── profiles.json
+
+```
+
+
+
+### Pipeline
+
+
+
+```
+
+POST /api/v1/analyze
+
+│
+
+▼
+
+parse_analysis_payload(payload, profiles)
+
+│
+
+▼
+
+solve_analysis(parsed)
+
+│
+
+▼
+
+build_response(result)
+
+```
+
+
+
+### Configuration Loading
+
+
+
+`profiles.json` is read once at application startup inside the FastAPI `lifespan` context manager and stored as `app.state.profiles` — a fully validated `ProfilesConfig` instance. All downstream pipeline functions receive this object directly. No disk reads occur during request handling.
+
+
+
+```python
+
+@asynccontextmanager
+
+async def lifespan(app: FastAPI):
+
+app.state.profiles = load_profiles_config()
+
+yield
+
+```
+
+
+
+`load_profiles_config()` is additionally decorated with `@lru_cache(maxsize=1)` so that any call outside the lifespan (e.g., directly in tests) also reads the file only once.
+
+
+
+### ProfilesConfig Model
+
+
+
+```
+
+ProfilesConfig
+
+├── host_profiles: dict[str, HostProfileConfig]
+
+├── tiers: dict[str, TierProfileConfig]
+
+├── floors: dict[str, FloorProfileConfig]
+
+└── image_lookup_table: dict[str, str]
+
+```
+
+
+
+All four sub-models carry `extra="forbid"` to reject stale or unknown configuration keys at load time.
+
+
+
+### Patch Application
+
+
+
+The backend produces a `patches: List[PatchCoord]` array of typed operations (`op: "set" | "add" | "remove"`, `path: List[str]`, `value: Any`) describing only what changed. The frontend applies these coordinates against the original YAML string using the `yaml` package's `parseDocument` + `setIn` API. This preserves all original aliases, formatting, and inline comments in the Diff Viewer.
+
+
+
+---
+
+
+
+## How It Works
+
+
+
+1. **Ingest**: Paste raw YAML or provide a GitHub repository URL. The backend handles deep monorepo path resolution automatically via the Tree API fallback.
+
+2. **Classify**: Each service is assigned a resource tier based on its image, labels, port exposure, and name tokens. Tier assignment determines which RAM formula, CPU model, tunable variable, and floor constraints apply.
+
+3. **Solve**: The algebraic solver projects the maximum viable value for each tier's primary variable (e.g., `max_connections` for databases, `WORKERS` for API servers, `maxmemory` for caches) that fits within the profile-adjusted RAM budget. Replica count is factored into all cost calculations.
+
+4. **Patch**: The solver's mutations are encoded as a minimal `PatchCoord` list. The frontend overlays them client-side, producing a clean diff without touching untouched sections of the manifest.
+
+
+
+---
+
+
+
+## Tech Stack
+
+
+
+**Backend**
+
+- **Python 3.11+** — minimum required runtime
+
+- **FastAPI 0.115** — ASGI framework with lifespan-managed startup
+
+- **Pydantic v2** — strict schema validation for all configuration and API types
+
+- **ruamel.yaml** — round-trip YAML parser that preserves comments and formatting
+
+- **psutil** — system hardware telemetry for the `/api/v1/hardware` endpoint
+
+- **uvicorn** — ASGI server
+
+
+
+**Frontend**
+
+- **React 18** + **Vite 5** — component-based UI with hot-module replacement
+
+- **Tailwind CSS v3** — dark-mode-first styling
+
+- **Lucide React** — icon library
+
+- **yaml** (eemeli) — client-side YAML AST patching via `parseDocument` + `setIn`
+
+- **diff** — line-diff computation for the Diff Viewer
+
+
+
+---
+
+
+
+## Quick Start & Installation
+
+
+
+### 1. Clone the Repository
+
+
+
+```bash
+
+git clone https://github.com/shouryaawr/Can-My-PC-Host-This-.git
+
+cd Can-My-PC-Host-This-
+
+```
+
+
+
+### 2. Backend
+
+
+
+Requires Python 3.11+.
+
+
+
+```bash
+
+cd backend
+
+python -m venv .venv
+
+```
+
+
+
+If `venv` creation hangs on Windows during `ensurepip`:
+
+
+
+```powershell
+
+py -3 -m venv .venv --without-pip
+
+.\.venv\Scripts\activate
+
+python -m ensurepip --upgrade
+
+```
+
+
+
+**Activate:**
+
+
+
+Windows:
+
+```powershell
+
+.\.venv\Scripts\activate
+
+```
+
+
+
+macOS / Linux:
+
+```bash
+
+source .venv/bin/activate
+
+```
+
+
+
+**Install and run:**
+
+
+
+```bash
+
+pip install -r requirements.txt
+
+uvicorn app.main:app --reload
+
+```
+
+
+
+The FastAPI server starts on `http://localhost:8000`. The interactive API docs are available at `http://localhost:8000/docs`.
+
+
+
+### 3. Frontend
+
+
+
+Requires Node.js 18+. Open a new terminal from the project root.
+
+
+
+```bash
+
+cd frontend
+
+npm install
+
+npm run dev
+
+```
+
+
+
+The Vite dev server starts on `http://localhost:5173` and proxies all `/api` requests to the backend automatically.
+
+
+
+**Production build:**
+
+
+
+```bash
+
+npm run build
+
+npm run preview
+
+```
+
+
+
+---
+
+
+
+## Running Tests
+
+
+
+The test suite covers the full optimization pipeline — RAM formulas, CPU scaling, floor enforcement, cgroup injection, algebraic projection, replica multipliers, and end-to-end engine integration — with 55 assertions.
+
+
+
+```bash
+
+cd backend
+
+python -m pytest tests/ -v
+
+```
+
+
+
+All tests run without a live server. The `engine.py` integration tests call `run_optimization_engine` directly, which uses `ensure_profiles_config` to load `profiles.json` via the cached `load_profiles_config()` function.
+
+
+
+---
+
+
+
+## Roadmap
+
+
+
+- **CLI Integration**: Expose the engine as a terminal tool (`cmy-host check`) that runs before `docker-compose up`.
+
+- **Kubernetes Support**: Extend the solver to analyze Deployments, StatefulSets, and Pod resource requests.
+
+- **Cloud Profile Sync**: Persist custom hardware profiles across devices.
+
+- **Compose Watch Integration**: Live re-analysis as you edit your compose file.
