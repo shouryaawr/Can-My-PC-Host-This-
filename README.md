@@ -149,7 +149,7 @@ npm run build
 # Preview the live production dashboard
 npm run preview
 ```
-> **Success!** Access the live dashboard (usually at `http://localhost:5173`) and start optimizing your architectures.
+> **Success!** Access the live dashboard and start optimizing your architectures.
 
 ---
 
