@@ -8,8 +8,8 @@ const SEVERITY = Object.freeze({
 
 function computeSeverity(ramMarginMb, services) {
   const mb = Number(ramMarginMb || 0);
-  const hasCgroups  = services.some((s) => s.cgroups_injected);
-  const hasAtFloor  = services.some((s) => s.at_floor);
+  const hasCgroups = services.some((s) => s.cgroups_injected);
+  const hasAtFloor = services.some((s) => s.at_floor);
 
   if (mb < 64 || hasCgroups) return SEVERITY.AT_RISK;
 
@@ -37,10 +37,9 @@ const SEVERITY_BADGE_META = {
 };
 
 function buildBannerCopy(severity, ramMarginMb, freeRamMb, services) {
-  const mb   = Math.max(0, Math.round(Number(ramMarginMb || 0)));
+  const mb = Math.max(0, Math.round(Number(ramMarginMb || 0)));
   const free = Math.round(Number(freeRamMb || 0));
-  const hasCgroups  = services.some((s) => s.cgroups_injected);
-  const hasAtFloor  = services.some((s) => s.at_floor);
+  const hasCgroups = services.some((s) => s.cgroups_injected);
 
   if (severity === SEVERITY.CAUTION) {
     if (mb <= 256) {
@@ -52,7 +51,9 @@ function buildBannerCopy(severity, ramMarginMb, freeRamMb, services) {
     if (mb < 64) {
       return `${mb} MB of ${free} MB free \u2014 critically below 64 MB threshold. Risk of OOM termination under load.`;
     }
-    return `${mb} MB of ${free} MB free \u2014 hard kernel memory limits (cgroups) injected. Risk of OOM termination under load.`;
+    if (hasCgroups) {
+      return `${mb} MB of ${free} MB free \u2014 hard kernel resource encapsulation is active through cgroups.`;
+    }
   }
   return null;
 }
@@ -180,7 +181,7 @@ function ServiceRow({ service }) {
           <p className="mt-0.5 text-xs text-zinc-500">
             {service.tier}
             {service.replicas > 1 && (
-              <span className="ml-1 text-zinc-600">× {service.replicas}</span>
+              <span className="ml-1 text-zinc-600">x {service.replicas}</span>
             )}
           </p>
         </div>        <span

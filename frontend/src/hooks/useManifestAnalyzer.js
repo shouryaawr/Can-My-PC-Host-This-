@@ -78,8 +78,9 @@ export function useManifestAnalyzer() {
     try {
       const hardwarePayload = {
         ...hardwareData,
-        total_ram_mb: Math.round((hardwareData.total_ram_mb / 1000) * 1024),
-        free_ram_mb: Math.round((hardwareData.free_ram_mb / 1000) * 1024),
+        total_ram_mb: Math.round(Number(hardwareData.total_ram_mb) || 0),
+        free_ram_mb: Math.round(Number(hardwareData.free_ram_mb) || 0),
+        cpu_cores: Math.round(Number(hardwareData.cpu_cores) || 0),
       };
 
       const requestBody = {

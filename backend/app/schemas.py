@@ -6,7 +6,17 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def clean_numeric_value(value: Any) -> Any:
+    if isinstance(value, str):
+        cleaned = "".join(char for char in value if char.isdigit() or char == ".")
+        if cleaned.count(".") > 1:
+            whole, *parts = cleaned.split(".")
+            cleaned = whole + "." + "".join(parts)
+        return cleaned or 0
+    return value
 
 
 class HostHardware(BaseModel):
@@ -14,6 +24,11 @@ class HostHardware(BaseModel):
     free_ram_mb: float
     cpu_cores: int
     storage_type: Literal["SSD", "HDD", "UNKNOWN"]
+
+    @field_validator("total_ram_mb", "free_ram_mb", "cpu_cores", mode="before")
+    @classmethod
+    def sanitize_numeric_fields(cls, value: Any) -> Any:
+        return clean_numeric_value(value)
 
 
 class CustomProfileConfig(BaseModel):
@@ -128,6 +143,13 @@ class OptimizationMetrics(BaseModel):
     free_ram_mb: float
 
 
+class DiagnosticsPayload(BaseModel):
+    cgroups_active: bool
+    oom_risk_flag: bool
+    headroom_mb: float
+    free_ram_mb: float
+
+
 class PatchCoord(BaseModel):
     op: Literal["set", "add", "remove"]
     path: List[str]
@@ -143,6 +165,8 @@ class AnalyzeResponse(BaseModel):
     metrics: OptimizationMetrics
     services: List[ServiceAnalysisResult]
     topology: List[ServiceAnalysisResult]
+    post_allocation_memory: float
+    diagnostics: DiagnosticsPayload
     warnings: List[str]
     execution_trace: List[str]
     trace_log: List[str]

@@ -17,6 +17,17 @@ export function parseRamInputValue(value, unit) {
   return Math.round(unit === "GB" ? number * 1000 : number);
 }
 
+export function sanitizeDecimalInput(value) {
+  const cleaned = String(value).replace(/[^0-9.]/g, "");
+  const [whole, ...parts] = cleaned.split(".");
+  const decimal = parts.join("");
+  return decimal ? `${whole}.${decimal}` : whole;
+}
+
+export function sanitizeIntegerInput(value) {
+  return String(value).replace(/[^0-9]/g, "");
+}
+
 export function getStatusTone(statusClass) {
   return statusClass.split(" ").find((item) => item.startsWith("text-")) || "text-zinc-300";
 }
