@@ -1,58 +1,32 @@
+import { diffLines } from "diff";
 import { Check, Clipboard, Download, FileCode2, Wand2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
-/* ─────────────────────────── annotation vocabulary ─────────────────────── */
-/*
- * Private, self-contained label map.
- * This dictionary is intentionally NOT exported and must never be shared with
- * or imported by TraceLog.jsx — that component owns its own log-parsing and
- * stage-tinting engine completely independently.
- *
- * Matching strategy: each entry carries a `pattern` (RegExp) that is tested
- * against the raw line text. The first match wins.
- *
- * HDD-host variables are flagged separately via the `hddOnly` boolean so that
- * the caller can gate them behind the `isHddHost` runtime prop.
- */
 const ANNOTATION_VOCAB = [
-  // CPU scheduling / worker pool variables
+
   { pattern: /\bWORKERS\s*[:=]/, label: "CPU Floor",   hddOnly: false },
   { pattern: /\bWEB_CONCURRENCY\s*[:=]/, label: "CPU Floor",   hddOnly: false },
-  // Cache ceiling
+
   { pattern: /\bmaxmemory\s*[:=]/,       label: "Cache Bound",  hddOnly: false },
-  // Connection pool
+
   { pattern: /\bmax_connections\s*[:=]/, label: "Conn Pool",    hddOnly: false },
-  // Any mutation under an active HDD host state
+
   { pattern: /\bWORKERS\s*[:=]/,            label: "I/O Dampened", hddOnly: true },
   { pattern: /\bWEB_CONCURRENCY\s*[:=]/,    label: "I/O Dampened", hddOnly: true },
   { pattern: /\bmaxmemory\s*[:=]/,          label: "I/O Dampened", hddOnly: true },
   { pattern: /\bmax_connections\s*[:=]/,    label: "I/O Dampened", hddOnly: true },
 ];
 
-/**
- * resolveAnnotationBadge
- *
- * Scans `line` against ANNOTATION_VOCAB and returns the appropriate two-word
- * orientation label, or null if no mutation key is detected.
- *
- * When `isHddHost` is true, hddOnly entries take precedence so that all
- * matched mutation variables surface as [I/O Dampened].
- *
- * @param {string}  line       — raw line text from the diff hunk
- * @param {boolean} isHddHost  — whether the host storage tier is rotational HDD
- * @returns {string|null}
- */
 function resolveAnnotationBadge(line, isHddHost) {
   if (typeof line !== "string" || !line) return null;
 
   if (isHddHost) {
-    // HDD path: check hddOnly entries first
+
     for (const entry of ANNOTATION_VOCAB) {
       if (entry.hddOnly && entry.pattern.test(line)) return entry.label;
     }
   }
 
-  // Standard path: only non-hddOnly entries
   for (const entry of ANNOTATION_VOCAB) {
     if (!entry.hddOnly && entry.pattern.test(line)) return entry.label;
   }
@@ -60,12 +34,6 @@ function resolveAnnotationBadge(line, isHddHost) {
   return null;
 }
 
-
-
-/**
- * AnnotationBadge — compact, muted grey inline chip.
- * Rendered exclusively on added/optimized lines; never on removed lines.
- */
 function AnnotationBadge({ label }) {
   if (!label) return null;
   return (
@@ -78,53 +46,19 @@ function AnnotationBadge({ label }) {
   );
 }
 
-
-
-/**
- * Very lightweight line-level diff.
- * Returns an array of { type: "same"|"removed"|"added", line: string }.
- */
 function computeDiff(original = "", optimized = "") {
-  // Normalize line endings: strip \r to prevent CRLF ↔ LF false positives
-  const a = original.replace(/\r/g, "").split("\n");
-  const b = optimized.replace(/\r/g, "").split("\n");
-
-  // Standard O(mn) LCS DP table
-  const m = a.length;
-  const n = b.length;
-  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
-
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (a[i - 1] === b[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-      }
-    }
-  }
-
-  // Traceback
+  const changes = diffLines(original, optimized, { newlineIsToken: false });
   const result = [];
-  let i = m;
-  let j = n;
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
-      result.unshift({ type: "same", line: a[i - 1] });
-      i--;
-      j--;
-    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      result.unshift({ type: "added", line: b[j - 1] });
-      j--;
-    } else {
-      result.unshift({ type: "removed", line: a[i - 1] });
-      i--;
+  for (const change of changes) {
+    const type = change.added ? "added" : change.removed ? "removed" : "same";
+
+    const lines = change.value.replace(/\n$/, "").split("\n");
+    for (const line of lines) {
+      result.push({ type, line });
     }
   }
   return result;
 }
-
-
 
 const LINE_STYLES = {
   same: {
@@ -145,7 +79,7 @@ const LINE_STYLES = {
     sign: "+",
     code: "text-green-500",
   },
-  // Sentinel for empty spacer cells in split view
+
   empty: {
     row: "",
     gutter: "text-zinc-800 select-none",
@@ -154,13 +88,6 @@ const LINE_STYLES = {
   },
 };
 
-/**
- * DiffLine — unified view row.
- *
- * Badge placement rule: render badge only on `added` lines, positioned
- * immediately after the trailing characters of the line text.
- * Removed lines never carry badges.
- */
 function DiffLine({ type, line, lineNo, badge }) {
   const s = LINE_STYLES[type];
   const showBadge = type === "added" && badge;
@@ -202,20 +129,6 @@ function DiffStats({ hunks }) {
   );
 }
 
-/**
- * Converts a flat hunk array into side-by-side row descriptors.
- *
- * Strategy: walk hunks in sequence. Collect contiguous change blocks
- * (runs of removed/added with no "same" anchor between them), then zip
- * the removes and adds within that block. This ensures a removed line
- * on the left is only ever paired with an added line that appears in the
- * *same* contiguous change run — never with an add from a completely
- * different part of the file.
- *
- * Row shapes:
- *   { kind: "same",    line }          — unchanged line, shown in both panes
- *   { kind: "changed", left, right }   — left=removed hunk|null, right=added hunk|null
- */
 function buildSplitRows(hunks) {
   const rows = [];
 
@@ -229,7 +142,6 @@ function buildSplitRows(hunks) {
       continue;
     }
 
-    // Collect one contiguous block of removed + added lines
     const blockRemoved = [];
     const blockAdded   = [];
     while (idx < hunks.length && hunks[idx].type !== "same") {
@@ -238,14 +150,12 @@ function buildSplitRows(hunks) {
       idx++;
     }
 
-    // Zip removes and adds within this block.
-    // Any surplus lines on either side get an empty spacer on the other.
     const blockLen = Math.max(blockRemoved.length, blockAdded.length);
     for (let k = 0; k < blockLen; k++) {
       rows.push({
         kind:  "changed",
-        left:  blockRemoved[k] ?? null,   // null → empty spacer in left pane
-        right: blockAdded[k]   ?? null,   // null → empty spacer in right pane
+        left:  blockRemoved[k] ?? null,
+        right: blockAdded[k]   ?? null,
       });
     }
   }
@@ -253,17 +163,9 @@ function buildSplitRows(hunks) {
   return rows;
 }
 
-/**
- * SplitPaneRow — one row inside a split-view pane.
- *
- * Badge placement rules:
- *   • side === "right"  (Optimized pane) + hunk.type === "added"  → render badge
- *   • side === "left"   (Original pane)                            → NEVER render badge
- *   • hunk.type === "removed"                                      → NEVER render badge
- */
 function SplitPaneRow({ hunk, lineNo, side, badge }) {
   if (!hunk) {
-    // Empty filler row — keeps row heights in sync via CSS
+
     return (
       <tr className="">
         <td className="w-8 select-none px-2 py-0 text-right text-[10px] leading-5 text-zinc-800">&#8203;</td>
@@ -273,7 +175,7 @@ function SplitPaneRow({ hunk, lineNo, side, badge }) {
   }
   const s = LINE_STYLES[hunk.type];
   const bgClass = hunk.type === "removed" ? "bg-red-500/10" : hunk.type === "added" ? "bg-green-500/10" : "";
-  // Badge only on right pane + added lines
+
   const showBadge = side === "right" && hunk.type === "added" && badge;
   return (
     <tr className={`transition ${s.row}`}>
@@ -287,8 +189,6 @@ function SplitPaneRow({ hunk, lineNo, side, badge }) {
     </tr>
   );
 }
-
-
 
 export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDownload, sourceFilename, isHddHost = false }) {
   const [diffViewMode, setDiffViewMode] = useState("unified");
@@ -306,30 +206,19 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
     [originalYaml, optimizedYaml],
   );
 
-  // ── Unified view line counters ──
   let origLine = 0;
   let optLine  = 0;
 
-  // ── Split view row builder ──
   const splitRows = useMemo(() => buildSplitRows(hunks), [hunks]);
 
   return (
-    <div className="space-y-3">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        {/* Left: title + stats */}
-        <div className="flex flex-wrap items-center gap-3">
+    <div className="space-y-3">      <div className="flex flex-wrap items-center justify-between gap-3">        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs font-medium text-zinc-300">
             <Wand2 className="h-3.5 w-3.5 text-zinc-500" />
             Optimized Manifest
           </div>
           <DiffStats hunks={hunks} />
-        </div>
-
-        {/* Right: Copy button + Unified / Side-by-Side toggle */}
-        <div className="flex items-center gap-2">
-          {/* Copy manifest button */}
-          <button
+        </div>        <div className="flex items-center gap-2">          <button
             type="button"
             onClick={handleCopy}
             className={`inline-flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-950/80 px-2.5 py-1 text-[0.68rem] font-medium text-zinc-400 transition hover:border-zinc-600 hover:text-zinc-200 ${
@@ -340,10 +229,7 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
               ? <Check className="h-3 w-3 text-green-500" />
               : <Clipboard className="h-3 w-3" />}
             Copy manifest
-          </button>
-
-          {/* Download optimized YAML button */}
-          {onDownload && (
+          </button>          {onDownload && (
             <button
               type="button"
               onClick={onDownload}
@@ -353,10 +239,7 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
               <Download className="h-3 w-3" />
               Download
             </button>
-          )}
-
-          {/* Unified / Side-by-Side toggle */}
-          <div className="inline-flex rounded-md border border-zinc-700 bg-zinc-950/80 p-0.5">
+          )}          <div className="inline-flex rounded-md border border-zinc-700 bg-zinc-950/80 p-0.5">
             {[
               { key: "unified",  label: "Unified"      },
               { key: "split",    label: "Side-by-Side" },
@@ -378,7 +261,6 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
         </div>
       </div>
 
-
       {diffViewMode === "unified" && (
         <div className="overflow-auto rounded-lg border border-zinc-800 bg-zinc-950">
           <table className="min-w-full border-collapse">
@@ -396,7 +278,7 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
                   optLine++;
                   lineNo = origLine;
                 }
-                // Resolve badge: only for added lines — removed lines never carry badges
+
                 const badge = hunk.type === "added"
                   ? resolveAnnotationBadge(hunk.line, isHddHost)
                   : null;
@@ -415,12 +297,10 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
         </div>
       )}
 
-
       {diffViewMode === "split" && (() => {
         let leftNo  = 0;
         let rightNo = 0;
 
-        // Build per-pane row arrays from splitRows
         const leftRows  = [];
         const rightRows = [];
 
@@ -439,9 +319,7 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
         }
 
         return (
-          <div className="rounded-lg border border-zinc-800 bg-zinc-950 overflow-hidden">
-            {/* Column headers */}
-            <div className="grid grid-cols-2 border-b border-zinc-800 bg-zinc-900/60">
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950 overflow-hidden">            <div className="grid grid-cols-2 border-b border-zinc-800 bg-zinc-900/60">
               <div className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-medium text-zinc-500 border-r border-zinc-800">
                 <FileCode2 className="h-3 w-3 text-zinc-500" />
                 Original
@@ -450,12 +328,7 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
                 <Wand2 className="h-3 w-3 text-zinc-500" />
                 Optimized
               </div>
-            </div>
-
-            {/* Two independent panes — each scrolls horizontally on its own */}
-            <div className="grid grid-cols-2 w-full">
-              {/* Left pane — Original. Badge prop intentionally withheld (always null). */}
-              <div className="min-w-0 overflow-x-auto border-r border-zinc-800/60">
+            </div>            <div className="grid grid-cols-2 w-full">              <div className="min-w-0 overflow-x-auto border-r border-zinc-800/60">
                 <table className="border-collapse">
                   <tbody>
                     {leftRows.map((r, idx) => (
@@ -469,14 +342,11 @@ export default function DiffViewer({ originalYaml = "", optimizedYaml = "", onDo
                     ))}
                   </tbody>
                 </table>
-              </div>
-
-              {/* Right pane — Optimized. Badges rendered on added lines only. */}
-              <div className="min-w-0 overflow-x-auto">
+              </div>              <div className="min-w-0 overflow-x-auto">
                 <table className="border-collapse">
                   <tbody>
                     {rightRows.map((r, idx) => {
-                      // Resolve badge only for added hunks in the right (Optimized) pane
+
                       const badge = r.hunk && r.hunk.type === "added"
                         ? resolveAnnotationBadge(r.hunk.line, isHddHost)
                         : null;

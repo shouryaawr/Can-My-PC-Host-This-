@@ -1,10 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, Database, HardDrive, Layers, Network, Server, ShieldAlert } from "lucide-react";
 
-// ---------------------------------------------------------------------------
-// Static priority/metadata map for known backend mutation keys.
-// Higher `priority` value = dominant when multiple mutations coexist.
-// ---------------------------------------------------------------------------
 const MUTATION_CONFIG = {
   WORKERS: {
     priority: 4,
@@ -27,7 +23,6 @@ const MUTATION_CONFIG = {
     impact: "Connection queue depth reduced; additional clients will be rejected at the cap.",
   },
 };
-
 
 const COLUMN_DEFINITIONS = [
   {
@@ -72,12 +67,6 @@ const TIER_STYLES = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// Tier display name normalisation
-// Declared at module scope — instantiated once at import time, never on render.
-// Keys match the lowercase tier tokens emitted by the backend.
-// Any unrecognised tier falls back to the raw token string.
-// ---------------------------------------------------------------------------
 const TIER_DISPLAY_MAP = {
   frontend:             "Frontend",
   backend_hybrid:       "Backend",
@@ -85,7 +74,6 @@ const TIER_DISPLAY_MAP = {
   database:             "Database",
   cache:                "Cache",
 };
-
 
 function formatRam(value) {
   return `${Math.round(Number(value || 0))}MB`;
@@ -98,10 +86,6 @@ function getCompressionPercent(service) {
   return Math.max(0, Math.min(100, (final / initial) * 100));
 }
 
-/**
- * Returns mutations sorted descending by priority weight.
- * Keys not present in MUTATION_CONFIG fall back to priority 0.
- */
 function sortMutationsByPriority(variables_mutated = {}) {
   return Object.entries(variables_mutated).sort(([keyA], [keyB]) => {
     const pA = MUTATION_CONFIG[keyA]?.priority ?? 0;
@@ -109,7 +93,6 @@ function sortMutationsByPriority(variables_mutated = {}) {
     return pB - pA;
   });
 }
-
 
 function SubordinateAccordion({ mutations }) {
   const [open, setOpen] = useState(false);
@@ -129,10 +112,7 @@ function SubordinateAccordion({ mutations }) {
           className={`h-3 w-3 shrink-0 transition-transform duration-200 ${open ? "rotate-180" : ""}`}
           aria-hidden="true"
         />
-      </button>
-
-      {/* Smooth in-flow expansion — uses CSS max-height transition */}
-      <div
+      </button>      <div
         style={{
           maxHeight: open ? `${mutations.length * 80}px` : "0px",
           overflow: "hidden",
@@ -170,7 +150,6 @@ function SubordinateAccordion({ mutations }) {
   );
 }
 
-
 function ServiceCard({ service }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -182,20 +161,15 @@ function ServiceCard({ service }) {
   const compressionPercent = getCompressionPercent(service);
   const barClass = isMutated ? "bg-zinc-500" : "bg-green-500";
 
-
   const rawMutations = service.variables_mutated ?? {};
   const hasMutations = Object.keys(rawMutations).length > 0;
 
-  // Sort all mutations high → low priority
   const sortedMutations = hasMutations ? sortMutationsByPriority(rawMutations) : [];
 
-  // Dominant = highest priority mutation (first after sort)
   const [dominantKey, dominantValue] = sortedMutations[0] ?? [];
   const dominantCfg = dominantKey ? (MUTATION_CONFIG[dominantKey] ?? null) : null;
 
-  // Subordinate = everything except the dominant
   const subordinateMutations = sortedMutations.slice(1);
-
 
   const changeLabel = isMutated
     ? `${formatRam(initialRam)} → ${formatRam(finalRam)}`
@@ -228,16 +202,13 @@ function ServiceCard({ service }) {
             >
               {TIER_DISPLAY_MAP[service.tier] ?? service.tier}
             </span>
-          </div>
-          {/* Only show chevron when there are mutations to expand */}
-          {hasMutations && (
+          </div>          {hasMutations && (
             <ChevronDown
               className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-600 transition-transform duration-200 ${expanded ? "rotate-180" : ""}`}
               aria-hidden="true"
             />
           )}
         </button>
-
 
         <div>
           <div className="mb-2 flex items-center justify-between font-mono text-xs">
@@ -261,22 +232,11 @@ function ServiceCard({ service }) {
             />
           </div>
         </div>
-      </div>
-
-      {/*
-        ── Rule 1: No mutations → suppress CHANGE / REASON / IMPACT entirely ──
-        ── Rule 2: Mutations present → show dominant key details + subordinate accordion ──
-      */}
-      {hasMutations && expanded && (
-        <div className="space-y-1.5 border-t border-zinc-800 px-3 py-2">
-          {/* Primary / dominant mutation detail */}
-          <div className="flex items-baseline gap-2">
+      </div>      {hasMutations && expanded && (
+        <div className="space-y-1.5 border-t border-zinc-800 px-3 py-2">          <div className="flex items-baseline gap-2">
             <span className="w-12 shrink-0 text-[10px] uppercase tracking-wide text-zinc-500">change</span>
             <span className="font-mono text-[11px] text-zinc-200">{changeLabel}</span>
-          </div>
-
-          {/* Dominant key badge */}
-          <div className="flex items-baseline gap-2">
+          </div>          <div className="flex items-baseline gap-2">
             <span className="w-12 shrink-0 text-[10px] uppercase tracking-wide text-zinc-500">key</span>
             <span className="font-mono text-[10px] text-zinc-300">
               {dominantKey !== undefined && dominantValue != null && typeof dominantValue === "object" && "from" in dominantValue
@@ -292,13 +252,9 @@ function ServiceCard({ service }) {
           <div className="flex items-baseline gap-2">
             <span className="w-12 shrink-0 text-[10px] uppercase tracking-wide text-zinc-500">impact</span>
             <span className="text-[11px] text-zinc-400">{dominantImpact}</span>
-          </div>
-
-          {/* In-flow subordinate accordion for lower-priority mutations */}
-          <SubordinateAccordion mutations={subordinateMutations} />
+          </div>          <SubordinateAccordion mutations={subordinateMutations} />
         </div>
       )}
-
 
       {service.cgroups_injected ? (
         <footer className="flex items-center gap-2 border-t border-zinc-700 bg-zinc-800/50 px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-zinc-400">
@@ -309,7 +265,6 @@ function ServiceCard({ service }) {
     </article>
   );
 }
-
 
 export default function Topology({ services = [] }) {
   const serviceList = Array.isArray(services) ? services : [];

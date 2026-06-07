@@ -1,52 +1,23 @@
 import { AlertTriangle, ShieldAlert, ShieldCheck, ShieldX } from "lucide-react";
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Centralized severity enum
- * All downstream UI reads from this — never from raw metric comparisons.
- * ───────────────────────────────────────────────────────────────────────── */
 const SEVERITY = Object.freeze({
   AT_RISK: "AT_RISK",
   CAUTION: "CAUTION",
   SAFE:    "SAFE",
 });
 
-/**
- * computeSeverity
- *
- * Single source of truth for the system-level severity classification.
- * Evaluation follows a strict top-down priority sequence:
- *
- *   1. AT_RISK  → ram_margin_mb < 64  OR any service has cgroups_injected
- *   2. CAUTION  → 64 ≤ ram_margin_mb ≤ 256  OR any service has at_floor
- *   3. SAFE     → ram_margin_mb > 256  AND no at_floor  AND no cgroups_injected
- *
- * Note: exactly 64 MB belongs exclusively to CAUTION (not AT_RISK).
- *
- * @param {number}   ramMarginMb
- * @param {object[]} services
- * @returns {"AT_RISK"|"CAUTION"|"SAFE"}
- */
 function computeSeverity(ramMarginMb, services) {
   const mb = Number(ramMarginMb || 0);
   const hasCgroups  = services.some((s) => s.cgroups_injected);
   const hasAtFloor  = services.some((s) => s.at_floor);
 
-  // Rule 1 — AT_RISK
   if (mb < 64 || hasCgroups) return SEVERITY.AT_RISK;
 
-  // Rule 2 — CAUTION  (64 ≤ mb ≤ 256  OR any at_floor)
   if (mb <= 256 || hasAtFloor) return SEVERITY.CAUTION;
 
-  // Rule 3 — SAFE  (mb > 256  AND no at_floor  AND no cgroups_injected — guaranteed by elimination)
   return SEVERITY.SAFE;
 }
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Severity → display lookup tables
- * Drives the top-level status badge and the advisory banner in sync.
- * ───────────────────────────────────────────────────────────────────────── */
-
-/** Top-level status badge — dot colour token only (no shield icon). */
 const SEVERITY_BADGE_META = {
   [SEVERITY.AT_RISK]: {
     label:   "At Risk",
@@ -65,20 +36,6 @@ const SEVERITY_BADGE_META = {
   },
 };
 
-/**
- * buildBannerCopy
- *
- * Generates the interpolated advisory banner string from live metric values.
- * Returns null for SAFE — the banner is not rendered in that state.
- *
- * CAUTION : "[mb] MB of [free] MB free — below 256 MB threshold. Monitor stability under peak loads."
- * AT_RISK : "[mb] MB of [free] MB free — critically below 64 MB threshold. Risk of OOM termination under load."
- *
- * @param {"AT_RISK"|"CAUTION"|"SAFE"} severity
- * @param {number} ramMarginMb
- * @param {number} freeRamMb
- * @returns {string|null}
- */
 function buildBannerCopy(severity, ramMarginMb, freeRamMb) {
   const mb   = Math.max(0, Math.round(Number(ramMarginMb || 0)));
   const free = Math.round(Number(freeRamMb || 0));
@@ -88,10 +45,9 @@ function buildBannerCopy(severity, ramMarginMb, freeRamMb) {
   if (severity === SEVERITY.AT_RISK) {
     return `${mb} MB of ${free} MB free \u2014 critically below 64 MB threshold. Risk of OOM termination under load.`;
   }
-  return null; // SAFE — banner suppressed
+  return null;
 }
 
-/** Advisory banner colour config — icon is always AlertTriangle. */
 const SEVERITY_BANNER_STYLE = {
   [SEVERITY.AT_RISK]: {
     className: "border-red-500/30 bg-red-500/8 text-red-400",
@@ -102,8 +58,6 @@ const SEVERITY_BANNER_STYLE = {
     iconClass: "text-amber-400",
   },
 };
-
-
 
 function classifyService(service) {
   if (service.cgroups_injected) return "critical";
@@ -144,13 +98,6 @@ const ZONE_META = {
   },
 };
 
-/* ─────────────────────────────────────────────────────────────────────────
- * Mutation key → display name translation map
- *
- * Localized to this file — never exported. Keys that are absent from this
- * map fall through to the raw token string via the fallback rule inside
- * generateServiceDescription.
- * ───────────────────────────────────────────────────────────────────────── */
 const MUTATION_DISPLAY_NAMES = {
   max_connections:  "Database Connections",
   WORKERS:          "Worker Threads",
@@ -158,44 +105,21 @@ const MUTATION_DISPLAY_NAMES = {
   maxmemory:        "Cache Memory Ceiling",
 };
 
-/**
- * generateServiceDescription
- *
- * Produces a plain-language diagnostic sentence derived from the service's
- * actual variables_mutated record.
- *
- * Interpolation rules (evaluated in strict order by list length):
- *
- *   0 mutations → "No changes applied. Allocation fits within budget at baseline."
- *   1 mutation  → "[Display Name] scaled down. Final allocation within budget."
- *   2 mutations → "[A] and [B] reduced to optimize host resource constraints."
- *   3+          → "[A], [B], and [C] reduced to optimize host resource constraints."
- *                  (Oxford comma applied before the final conjunction)
- *
- * @param {object} service — a single service entry from the AnalyzeResponse
- * @returns {string}
- */
 function generateServiceDescription(service) {
   const mutatedKeys = Object.keys(service.variables_mutated || {});
 
-  // Map each raw key to its clean display name; fall back to the raw token.
   const displayNames = mutatedKeys.map(
     (key) => MUTATION_DISPLAY_NAMES[key] ?? key,
   );
 
-  // Path A — zero mutations
   if (displayNames.length === 0) {
     return "No changes applied. Allocation fits within budget at baseline.";
   }
 
-  // Path B — single mutation
   if (displayNames.length === 1) {
     return `${displayNames[0]} scaled down. Final allocation within budget.`;
   }
 
-  // Path C — multiple mutations with Oxford comma formatting
-  // Two items: "A and B"
-  // Three+: "A, B, and C"
   let formattedList;
   if (displayNames.length === 2) {
     formattedList = `${displayNames[0]} and ${displayNames[1]}`;
@@ -208,13 +132,6 @@ function generateServiceDescription(service) {
   return `${formattedList} reduced to optimize host resource constraints.`;
 }
 
-
-
-/**
- * SeverityBadge — compact pill with a coloured dot signal token.
- * No shield icon — the dot is the sole colour-signaling element.
- * Label pattern: "Oversubscription Risk: [Severity]"
- */
 function SeverityBadge({ severity }) {
   const { label, pill, dot } = SEVERITY_BADGE_META[severity];
   return (
@@ -230,19 +147,9 @@ function SeverityBadge({ severity }) {
   );
 }
 
-/**
- * AdvisoryBanner — single high-fidelity warning strip.
- *
- * Visibility rules:
- *   SAFE    → returns null (no DOM node rendered)
- *   CAUTION → amber tint + interpolated copy
- *   AT_RISK → red tint  + interpolated copy
- *
- * AlertTriangle is the exclusive icon for this element across the workspace.
- */
 function AdvisoryBanner({ severity, ramMarginMb, freeRamMb }) {
   const copy = buildBannerCopy(severity, ramMarginMb, freeRamMb);
-  if (!copy) return null; // SAFE state — suppress entirely
+  if (!copy) return null;
 
   const { className, iconClass } = SEVERITY_BANNER_STYLE[severity];
   return (
@@ -259,9 +166,7 @@ function ServiceRow({ service }) {
 
   return (
     <li className="rounded-lg border border-zinc-800 bg-zinc-950/60 p-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        {/* Name + tier */}
-        <div className="min-w-0 flex-1">
+      <div className="flex flex-wrap items-start justify-between gap-2">        <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold text-zinc-100">{service.name}</p>
           <p className="mt-0.5 text-xs text-zinc-500">
             {service.tier}
@@ -269,25 +174,16 @@ function ServiceRow({ service }) {
               <span className="ml-1 text-zinc-600">× {service.replicas}</span>
             )}
           </p>
-        </div>
-
-        {/* Zone badge */}
-        <span
+        </div>        <span
           className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${badge}`}
         >
           <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden="true" />
           {label}
         </span>
-      </div>
-
-      {/* Explanation — dynamically generated from mutation records */}
-      <div className="mt-2 flex items-start gap-2">
+      </div>      <div className="mt-2 flex items-start gap-2">
         <Icon className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${iconClass}`} aria-hidden="true" />
         <p className="text-xs leading-5 text-zinc-400">{generateServiceDescription(service)}</p>
-      </div>
-
-      {/* Mini stats */}
-      <div className="mt-2 flex flex-wrap gap-3 text-[0.68rem] text-zinc-600">
+      </div>      <div className="mt-2 flex flex-wrap gap-3 text-[0.68rem] text-zinc-600">
         <span>
           Final RAM:{" "}
           <span className="font-mono text-zinc-400">
@@ -307,14 +203,11 @@ function ServiceRow({ service }) {
   );
 }
 
-
-
 export default function Diagnostics({ response }) {
   if (!response) return null;
 
   const services    = response.services ?? [];
   const ramMarginMb = response.metrics?.ram_margin_mb ?? 0;
-
 
   const severity = computeSeverity(ramMarginMb, services);
 
@@ -332,7 +225,6 @@ export default function Diagnostics({ response }) {
         freeRamMb={response.metrics?.free_ram_mb ?? 0}
       />
 
-
       <div className="grid grid-cols-3 gap-2 text-center text-xs">
         {[
           { count: criticalCount, label: "Critical", cls: "text-red-500"   },
@@ -348,7 +240,6 @@ export default function Diagnostics({ response }) {
           </div>
         ))}
       </div>
-
 
       {services.length > 0 ? (
         <ul className="space-y-2">

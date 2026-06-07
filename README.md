@@ -1,27 +1,28 @@
 # Can My PC Host This?
 
-<div align="center">
-  <p><strong>Your Hardware-Aware Docker Orchestration Engine</strong></p>
-  <p><em>Stop guessing if your system will crash. Know before you deploy.</em></p>
-</div>
+**Your Hardware-Aware Docker Compose Optimization Engine**
+
+*Stop guessing if your system will crash. Know before you deploy.*
 
 ---
 
-**Can My PC Host This?** is a fully independent, **full-stack application** built from the ground up with a custom deterministic optimization engine—**no external AI APIs, no third-party cloud dependencies**. It runs 100% locally to mathematically evaluate Docker Compose manifests against your specific host hardware. 
+**Can My PC Host This?** is a fully self-contained, full-stack application with a custom deterministic optimization engine—no external AI APIs, no third-party cloud dependencies. It runs 100% locally to mathematically evaluate Docker Compose manifests against your specific host hardware and emit a minimal set of resource constraints that fit your exact operational profile.
 
-Before you spin up a complex stack of microservices, this tool analyzes the load and automatically injects optimal `deploy.resources` limits directly into your `docker-compose.yml` to fit your exact operational needs.
+Before you spin up a complex stack of microservices, this tool analyzes the full load, algebraically projects optimal variable values for each service tier, and generates a precise patch set that injects `deploy.resources` limits directly into your manifest.
 
-Built for developers who want to run heavy local deployments without freezing their IDEs, and for sysadmins looking to squeeze maximum efficiency from dedicated hosts.
+Built for developers running heavy local stacks without freezing their IDE, and for sysadmins squeezing maximum efficiency from dedicated hosts.
 
-> **Project Status**: Active Development / Hackathon Scope. This engine currently supports Docker Compose v3+ memory limits and replicas. CPU reservation limits and multi-node swarm orchestration are planned for upcoming releases.
+> **Project Status**: Active Development. The engine currently supports Docker Compose v3+ memory and CPU limits with full replica scaling. Multi-node Swarm orchestration and Kubernetes support are planned.
 
 ---
 
 ## Table of Contents
 - [Key Features](#key-features)
+- [Architecture](#architecture)
 - [How It Works](#how-it-works)
 - [Tech Stack](#tech-stack)
 - [Quick Start & Installation](#quick-start--installation)
+- [Running Tests](#running-tests)
 - [Roadmap](#roadmap)
 
 ---
@@ -29,135 +30,216 @@ Built for developers who want to run heavy local deployments without freezing th
 ## Key Features
 
 **Deterministic Optimization Engine**
-Say goodbye to Out-Of-Memory (OOM) kills. The engine calculates predicted RAM and CPU utilization for every service in your manifest and injects strict constraints (`deploy.resources.limits`) based on mathematical models of your hardware capacity.
+Say goodbye to OOM kills. The engine calculates predicted RAM and CPU utilization for every service and tier in your manifest, then injects strict `deploy.resources.limits` using mathematical models calibrated to your hardware. The solver operates algebraically—it projects the highest viable variable value that fits within your memory budget before falling back to hard cgroup limits.
+
+**Pydantic-Validated Configuration**
+All tier profiles, resource floors, variable aliases, and image classification data are loaded once at server startup via FastAPI's `lifespan` hook into a validated `ProfilesConfig` Pydantic model. Every field carries a strict type contract enforced at load time. No raw dictionary access occurs anywhere in the pipeline at runtime.
 
 **Hardware Auto-Detection & Manual Override**
-Since browsers restrict access to exact device specifications for security, the dashboard leverages available browser APIs to fetch the closest approximation of your logical CPU cores and total system memory. For precise tuning, we provide a manual edit button so you can easily override these estimates and input your exact hardware specs or simulate a different machine.
+The dashboard uses available browser APIs (`navigator.hardwareConcurrency`, `navigator.deviceMemory`) to approximate your CPU core count and total system memory. For precise tuning, a manual override panel lets you input exact hardware specs or simulate a different machine. The backend also exposes a `/api/v1/hardware` endpoint that reads your actual system stats via `psutil` for server-side detection.
 
 **Tailored Operational Profiles**
-Not all workloads are created equal. Choose a profile that fits your exact use-case:
-- **Silent Running**: Reserves up to 30% of RAM and caps CPU. Perfect for background services while you work.
-- **Background Dev**: A balanced 50% allocation specifically for local dev environments.
-- **Max Performance**: Uses up to 95% of your system resources. Run this when you have a dedicated server.
-- **Advanced/Custom**: Fully customize safety buffers, CPU multipliers, loop iterations, and cgroups fallbacks.
+Choose a profile that matches your workload:
+- **Silent Running**: 70% RAM safety buffer, 80% CPU cap. Best for background services while you work.
+- **Background Dev**: 50% RAM buffer, 100% CPU cap. Balanced for development machines sharing resources with an IDE.
+- **Max Performance**: 95% RAM buffer, 150% CPU cap. For dedicated hosts where the stack owns the machine.
+- **Advanced / Custom**: Fully control the RAM safety buffer, CPU threshold multiplier, iteration cap, cgroup injection, and floor strictness.
 
-**Frictionless Monorepo GitHub Integrations**
-Directly fetch and analyze manifests from public GitHub repositories using our backend parsers. No copy-pasting required. If your compose file is buried deep inside a monorepo, the engine automatically falls back to the GitHub Tree API, recursively scanning nested directories and providing a clean dropdown selection if multiple manifests are discovered.
+**Frictionless GitHub Integration**
+Fetch and analyze manifests from any public GitHub repository directly. If a compose file is buried in a monorepo, the engine falls back to the GitHub Tree API, recursively scans for all valid compose filenames, and surfaces a clean dropdown for selection when multiple manifests are found.
 
-**Bulletproof Port Conflict Engine**
-The backend incorporates a pre-processing tokenization layer that intelligently neuters environment variable syntaxes (like `${PORT}:8080`) before scanning, eliminating port conflict false positives while perfectly mapping standard `host:container` layouts.
+**Port Conflict Detection**
+Pre-processing tokenizes environment variable placeholders (e.g., `${PORT}:8080`) before scanning, eliminating false positives while accurately mapping standard `host:container` port bindings and detecting wildcard-to-specific conflicts.
+
+**Service Tier Classification**
+Services are automatically classified into resource tiers (`database`, `cache`, `backend_hybrid`, `backend_low_priority`, `frontend`, `backend`) using a priority chain: explicit label override → image name lookup table → port exposure → name and body token scan. Each tier carries its own RAM formula, CPU scaling model, variable floor, and tunable variable set.
+
+**`x-tuning` Extension Block**
+Any service in your compose file can carry an `x-tuning` block to override solver behavior per-service:
+- `ram_floor_mb`: sets a hard lower bound for memory allocation
+- `never_cgroup`: excludes the service from cgroup injection
+- `target_variable`: overrides the solver's auto-detected tuning variable
+- `optimizable: false`: locks the service at its baseline footprint
 
 **Interactive Visualizations**
-- **Node Topology**: A dynamic visual graph mapping the architecture and network dependencies of your parsed manifest.
-- **Diff Viewer**: A beautifully syntax-highlighted side-by-side comparison showing exactly what limits the engine injected into your original code.
-- **Rule Trace Logs**: Complete transparency. Get a step-by-step diagnostic breakdown of how the engine allocated memory, down to the megabyte.
+- **Diff Viewer**: Syntax-highlighted side-by-side comparison of your original and optimized manifest.
+- **Node Topology**: Dynamic visual graph of the service dependency graph and network topology.
+- **Rule Trace**: Step-by-step diagnostic log of how the engine allocated memory and CPU, down to the megabyte per service.
+- **Diagnostics**: Full metrics panel with RAM margin, CPU saturation percentage, and per-service floor flags.
+
+---
+
+## Architecture
+
+```
+backend/app/
+├── main.py
+├── engine.py
+├── parser.py
+├── solver.py
+├── patcher.py
+├── schemas.py
+└── profiles.json
+```
+
+### Pipeline
+
+```
+POST /api/v1/analyze
+        │
+        ▼
+parse_analysis_payload(payload, profiles)
+        │
+        ▼
+solve_analysis(parsed)
+        │
+        ▼
+build_response(result)
+```
+
+### Configuration Loading
+
+`profiles.json` is read once at application startup inside the FastAPI `lifespan` context manager and stored as `app.state.profiles` — a fully validated `ProfilesConfig` instance. All downstream pipeline functions receive this object directly. No disk reads occur during request handling.
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.profiles = load_profiles_config()
+    yield
+```
+
+`load_profiles_config()` is additionally decorated with `@lru_cache(maxsize=1)` so that any call outside the lifespan (e.g., directly in tests) also reads the file only once.
+
+### ProfilesConfig Model
+
+```
+ProfilesConfig
+├── host_profiles: dict[str, HostProfileConfig]
+├── tiers: dict[str, TierProfileConfig]
+├── floors: dict[str, FloorProfileConfig]
+└── image_lookup_table: dict[str, str]
+```
+
+All four sub-models carry `extra="forbid"` to reject stale or unknown configuration keys at load time.
+
+### Patch Application
+
+The backend produces a `patches: List[PatchCoord]` array of typed operations (`op: "set" | "add" | "remove"`, `path: List[str]`, `value: Any`) describing only what changed. The frontend applies these coordinates against the original YAML string using the `yaml` package's `parseDocument` + `setIn` API. This preserves all original aliases, formatting, and inline comments in the Diff Viewer.
 
 ---
 
 ## How It Works
 
-1. **Ingestion**: Paste your raw YAML or provide a repository URL. The engine handles deep monorepo pathing automatically.
-2. **Simulation**: The FastAPI backend evaluates the structural topology, resolving replicas, base hardware weights, and mathematical capacity thresholds.
-3. **AST JSON Patching**: Instead of brute-force rewriting the entire file (which causes massive diff bloat and YAML anchor expansion), the backend generates a lean AST JSON Patch Array of precise coordinates containing only the calculated modifications.
-4. **Dynamic Overlay**: The frontend uses the `yaml` package to overlay these exact patches dynamically onto the raw payload. This completely preserves your file's aliases, formatting, and inline comments in the syntax-highlighted Diff Viewer.
+1. **Ingest**: Paste raw YAML or provide a GitHub repository URL. The backend handles deep monorepo path resolution automatically via the Tree API fallback.
+2. **Classify**: Each service is assigned a resource tier based on its image, labels, port exposure, and name tokens. Tier assignment determines which RAM formula, CPU model, tunable variable, and floor constraints apply.
+3. **Solve**: The algebraic solver projects the maximum viable value for each tier's primary variable (e.g., `max_connections` for databases, `WORKERS` for API servers, `maxmemory` for caches) that fits within the profile-adjusted RAM budget. Replica count is factored into all cost calculations.
+4. **Patch**: The solver's mutations are encoded as a minimal `PatchCoord` list. The frontend overlays them client-side, producing a clean diff without touching untouched sections of the manifest.
 
 ---
 
 ## Tech Stack
 
-**Frontend Frameworks & UI**
-- **React 18** + **Vite**: Lightning-fast, modular UI components.
-- **Tailwind CSS**: Sleek, dark-mode-first aesthetic.
-- **Lucide React**: Clean, modern iconography.
+**Backend**
+- **Python 3.11+** — minimum required runtime
+- **FastAPI 0.115** — ASGI framework with lifespan-managed startup
+- **Pydantic v2** — strict schema validation for all configuration and API types
+- **ruamel.yaml** — round-trip YAML parser that preserves comments and formatting
+- **psutil** — system hardware telemetry for the `/api/v1/hardware` endpoint
+- **uvicorn** — ASGI server
 
-**Backend & Data Processing**
-- **Python** + **FastAPI**: High-performance API endpoints.
-- **ruamel.yaml**: Lossless YAML parsing and emitting.
-- **psutil**: Advanced system and hardware telemetry profiling.
+**Frontend**
+- **React 18** + **Vite 5** — component-based UI with hot-module replacement
+- **Tailwind CSS v3** — dark-mode-first styling
+- **Lucide React** — icon library
+- **yaml** (eemeli) — client-side YAML AST patching via `parseDocument` + `setIn`
+- **diff** — line-diff computation for the Diff Viewer
 
 ---
 
 ## Quick Start & Installation
 
 ### 1. Clone the Repository
+
 ```bash
 git clone https://github.com/shouryaawr/Can-My-PC-Host-This-.git
 cd Can-My-PC-Host-This-
 ```
 
-### 2. Launching the Analysis Backend
-Ensure you have Python 3.10+ installed.
+### 2. Backend
 
-First, navigate to the backend directory and create a virtual environment:
+Requires Python 3.11+.
+
 ```bash
 cd backend
 python -m venv .venv
 ```
 
-If the `venv` creation hangs or fails during `ensurepip`, try the Windows launcher instead:
-```powershell
-py -3 -m venv .venv
-```
+If `venv` creation hangs on Windows during `ensurepip`:
 
-If the process still stalls, retry with a clean venv and install pip manually after activation:
 ```powershell
 py -3 -m venv .venv --without-pip
 .\.venv\Scripts\activate
 python -m ensurepip --upgrade
 ```
 
-**Activate the virtual environment:**
+**Activate:**
 
-*On Windows:*
+Windows:
 ```powershell
 .\.venv\Scripts\activate
 ```
-*(If using Command Prompt, use `.venv\Scripts\activate.bat` instead)*
 
-*On macOS/Linux:*
+macOS / Linux:
 ```bash
 source .venv/bin/activate
 ```
 
-**Install dependencies and boot the server:**
+**Install and run:**
+
 ```bash
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
-> **Backend Port**: By default, the FastAPI server runs on `http://localhost:8000`.
 
-### 3. Launching the Frontend
+The FastAPI server starts on `http://localhost:8000`. The interactive API docs are available at `http://localhost:8000/docs`.
 
-Ensure you have Node.js 18+ installed. Open a new terminal window and make sure you are in the project root (`Can-My-PC-Host-This-`).
+### 3. Frontend
+
+Requires Node.js 18+. Open a new terminal from the project root.
 
 ```bash
 cd frontend
 npm install
-```
-
-**Option A: Run Locally in Development**
-```bash
-# Start the Vite development server with hot-reloading
 npm run dev
 ```
 
-**Option B: Build for Production**
-```bash
-# Build the optimized production bundle
-npm run build
+The Vite dev server starts on `http://localhost:5173` and proxies all `/api` requests to the backend automatically.
 
-# Preview the live production dashboard
+**Production build:**
+
+```bash
+npm run build
 npm run preview
 ```
-> **Success!** Access the live dashboard and start optimizing your architectures.
+
+---
+
+## Running Tests
+
+The test suite covers the full optimization pipeline — RAM formulas, CPU scaling, floor enforcement, cgroup injection, algebraic projection, replica multipliers, and end-to-end engine integration — with 55 assertions.
+
+```bash
+cd backend
+python -m pytest tests/ -v
+```
+
+All tests run without a live server. The `engine.py` integration tests call `run_optimization_engine` directly, which uses `ensure_profiles_config` to load `profiles.json` via the cached `load_profiles_config()` function.
 
 ---
 
 ## Roadmap
-- **Cloud Synchronization**: Persist your custom hardware profiles securely across devices.
-- **Kubernetes Support**: Extend the deterministic engine to analyze K8s Deployments, StatefulSets, and Pod specifications.
-- **CLI Integration**: Expose the engine as a terminal tool so you can run `cmy-host check` before `docker-compose up`.
 
-<div align="center">
-  <p><i>Made for developers who demand a smooth, crash-free system.</i></p>
-</div>
+- **CLI Integration**: Expose the engine as a terminal tool (`cmy-host check`) that runs before `docker-compose up`.
+- **Kubernetes Support**: Extend the solver to analyze Deployments, StatefulSets, and Pod resource requests.
+- **Cloud Profile Sync**: Persist custom hardware profiles across devices.
+- **Compose Watch Integration**: Live re-analysis as you edit your compose file.

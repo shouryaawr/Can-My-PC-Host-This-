@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, ClipboardList } from "lucide-react";
 
-
 function formatProfileLabel(raw) {
   const str = typeof raw === "string" && raw.trim() ? raw : "default";
   return str
@@ -10,7 +9,6 @@ function formatProfileLabel(raw) {
     .join(" ");
 }
 
-
 const PREFIX_MAP = [
   { from: /^\[Manifest\]/,   to: "[MANIFEST]"     },
   { from: /^\[Hardware\]/,   to: "[HARDWARE]"     },
@@ -18,24 +16,24 @@ const PREFIX_MAP = [
   { from: /^\[Optimize\]/,   to: "[OPTIMIZATION]" },
   { from: /^\[Safety\]/,     to: "[SAFETY]"       },
   { from: /^\[Warning\]/,    to: "[WARNING]"      },
-  { from: /^\[STAGE \d+\]/,  to: null             }, // already canonical — leave as-is
+  { from: /^\[STAGE \d+\]/,  to: null             },
 ];
 
 function normalizePrefix(row) {
   if (typeof row !== "string") return String(row);
   for (const { from, to } of PREFIX_MAP) {
     if (from.test(row)) {
-      // null means the token is already canonical; return unchanged
+
       if (to === null) return row;
       return row.replace(from, to);
     }
   }
-  // Unknown / unmapped prefix — return raw line without distortion
+
   return row;
 }
 
 function getRowTone() {
-  // All rows use uniform zinc styling — no accent color distinctions
+
   return "border-zinc-700 bg-zinc-800/30 text-zinc-400";
 }
 

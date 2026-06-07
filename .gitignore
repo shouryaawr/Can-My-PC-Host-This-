@@ -34,3 +34,14 @@ desktop.ini
 *.txt
 qa_*.md
 *.test-report.*
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+**/tests/
+**/__tests__/
+**/test_*.py
+**/*_test.py
+**/*.test.*
+**/*.spec.*
