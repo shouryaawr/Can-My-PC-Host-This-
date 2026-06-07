@@ -45,10 +45,17 @@ def solve_analysis(parsed: ParsedManifest) -> SolverResult:
         + ", ".join(s.name for s in contexts) + "."
     )
 
+    profile = resolve_host_profile(
+        payload.selected_profile, profiles, trace, payload.custom_profile_config
+    )
+    effective_free_ram = payload.host_hardware.free_ram_mb * profile.ram_safety_buffer
+    cpu_budget = payload.host_hardware.cpu_cores * profile.cpu_threshold_multiplier
+    storage_type = payload.host_hardware.storage_type
+
     floor_total = sum(
         profiles.floors[s.tier].ram_mb * s.replicas for s in contexts
     )
-    if floor_total > payload.host_hardware.free_ram_mb:
+    if floor_total > effective_free_ram:
         return SolverResult(
             payload=payload,
             trace=trace,
@@ -61,7 +68,7 @@ def solve_analysis(parsed: ParsedManifest) -> SolverResult:
                 yaml_string=dump_yaml(parsed.yaml, parsed.document),
                 trace=trace + [
                     "[Capacity] Minimum memory floors exceed available RAM: "
-                    f"{round(floor_total, 1)} MB > {round(payload.host_hardware.free_ram_mb, 1)} MB."
+                    f"{round(floor_total, 1)} MB > {round(effective_free_ram, 1)} MB."
                 ],
                 warnings=warnings,
                 services=contexts,
@@ -70,13 +77,6 @@ def solve_analysis(parsed: ParsedManifest) -> SolverResult:
             ),
         )
 
-    profile = resolve_host_profile(
-        payload.selected_profile, profiles, trace, payload.custom_profile_config
-    )
-    effective_free_ram = payload.host_hardware.free_ram_mb * profile.ram_safety_buffer
-    cpu_budget = payload.host_hardware.cpu_cores * profile.cpu_threshold_multiplier
-    storage_type = payload.host_hardware.storage_type
-
     inject_missing_defaults(contexts, profiles)
     recalculate(contexts, profiles, storage_type)
     initial_predicted_ram = sum(s.current_ram_mb * s.replicas for s in contexts)
@@ -84,7 +84,7 @@ def solve_analysis(parsed: ParsedManifest) -> SolverResult:
     for service in contexts:
         if not service.xtuning_optimizable and (
             service.current_ram_mb * service.replicas
-        ) > payload.host_hardware.free_ram_mb:
+        ) > effective_free_ram:
             return SolverResult(
                 payload=payload,
                 trace=trace,
@@ -98,7 +98,7 @@ def solve_analysis(parsed: ParsedManifest) -> SolverResult:
                     trace=trace + [
                         f"[Capacity] '{service.name}' requires "
                         f"{round(service.current_ram_mb, 1)} MB but is unoptimizable "
-                        f"(exceeds free RAM of {round(payload.host_hardware.free_ram_mb, 1)} MB)."
+                        f"(exceeds free RAM of {round(effective_free_ram, 1)} MB)."
                     ],
                     warnings=warnings,
                     services=contexts,

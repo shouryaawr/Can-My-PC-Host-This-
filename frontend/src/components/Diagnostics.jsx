@@ -36,14 +36,23 @@ const SEVERITY_BADGE_META = {
   },
 };
 
-function buildBannerCopy(severity, ramMarginMb, freeRamMb) {
+function buildBannerCopy(severity, ramMarginMb, freeRamMb, services) {
   const mb   = Math.max(0, Math.round(Number(ramMarginMb || 0)));
   const free = Math.round(Number(freeRamMb || 0));
+  const hasCgroups  = services.some((s) => s.cgroups_injected);
+  const hasAtFloor  = services.some((s) => s.at_floor);
+
   if (severity === SEVERITY.CAUTION) {
-    return `${mb} MB of ${free} MB free \u2014 below 256 MB threshold. Monitor stability under peak loads.`;
+    if (mb <= 256) {
+      return `${mb} MB of ${free} MB free \u2014 below 256 MB threshold. Monitor stability under peak loads.`;
+    }
+    return `${mb} MB of ${free} MB free \u2014 running at minimum floor allocation. Monitor stability under peak loads.`;
   }
   if (severity === SEVERITY.AT_RISK) {
-    return `${mb} MB of ${free} MB free \u2014 critically below 64 MB threshold. Risk of OOM termination under load.`;
+    if (mb < 64) {
+      return `${mb} MB of ${free} MB free \u2014 critically below 64 MB threshold. Risk of OOM termination under load.`;
+    }
+    return `${mb} MB of ${free} MB free \u2014 hard kernel memory limits (cgroups) injected. Risk of OOM termination under load.`;
   }
   return null;
 }
@@ -147,8 +156,8 @@ function SeverityBadge({ severity }) {
   );
 }
 
-function AdvisoryBanner({ severity, ramMarginMb, freeRamMb }) {
-  const copy = buildBannerCopy(severity, ramMarginMb, freeRamMb);
+function AdvisoryBanner({ severity, ramMarginMb, freeRamMb, services }) {
+  const copy = buildBannerCopy(severity, ramMarginMb, freeRamMb, services);
   if (!copy) return null;
 
   const { className, iconClass } = SEVERITY_BANNER_STYLE[severity];
@@ -223,6 +232,7 @@ export default function Diagnostics({ response }) {
         severity={severity}
         ramMarginMb={ramMarginMb}
         freeRamMb={response.metrics?.free_ram_mb ?? 0}
+        services={services}
       />
 
       <div className="grid grid-cols-3 gap-2 text-center text-xs">
