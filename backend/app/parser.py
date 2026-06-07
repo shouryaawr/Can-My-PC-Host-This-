@@ -19,10 +19,6 @@ class ManifestValidationError(ValueError):
     pass
 
 
-class CircularDependencyError(ManifestValidationError):
-    pass
-
-
 MAX_SERVICES: int = 50
 BACKEND_TIER_NAME = "backend"
 
@@ -144,7 +140,6 @@ def parse_analysis_payload(payload: AnalyzeRequest, profiles: ProfilesConfig) ->
 
     try:
         check_service_cap(services)
-        check_circular_dependencies(services)
     except ManifestValidationError as exc:
         return ParsedManifest(
             payload=payload,
@@ -208,52 +203,7 @@ def check_service_cap(services: dict[str, Any]) -> None:
         )
 
 
-def check_circular_dependencies(services: dict[str, Any]) -> None:
-    adjacency: dict[str, list[str]] = {name: [] for name in services}
-    in_degree: dict[str, int] = {name: 0 for name in services}
 
-    for name, config in services.items():
-        if not isinstance(config, dict):
-            continue
-        depends_on = config.get("depends_on", {})
-
-        if isinstance(depends_on, dict):
-            dependencies = list(depends_on.keys())
-        elif isinstance(depends_on, list):
-            dependencies = [d for d in depends_on if isinstance(d, str)]
-        else:
-            continue
-
-        for dep in dependencies:
-            if dep not in adjacency:
-                adjacency[dep] = []
-                in_degree[dep] = 0
-            adjacency[dep].append(name)
-            in_degree[name] += 1
-
-    queue: deque[str] = deque(
-        node for node, degree in in_degree.items() if degree == 0
-    )
-    processed = 0
-
-    while queue:
-        node = queue.popleft()
-        processed += 1
-        for dependent in adjacency[node]:
-            in_degree[dependent] -= 1
-            if in_degree[dependent] == 0:
-                queue.append(dependent)
-
-    total = len(in_degree)
-    if processed < total:
-        cycle_members = sorted(
-            node for node, degree in in_degree.items() if degree > 0
-        )
-        raise CircularDependencyError(
-            f"Circular dependency detected among services: "
-            f"{', '.join(cycle_members)}. "
-            "Resolve the dependency loop before re-submitting the manifest."
-        )
 
 
 def safe_image_lookup_table(profiles: ProfilesConfig) -> dict[str, str]:
@@ -331,35 +281,6 @@ def detect_orchestrator(document: Any) -> tuple[str, str] | None:
             "Kubernetes",
             "Kubernetes manifests are designed for distributed clusters, not local PC hosting.",
         )
-    if "job" in top_keys and "services" not in top_keys:
-        return (
-            "HashiCorp Nomad",
-            "Nomad job files target distributed infrastructure, not local Docker Compose stacks.",
-        )
-    if isinstance(document, list) and document and isinstance(document[0], dict) and "hosts" in document[0]:
-        return (
-            "Ansible Playbook",
-            "Ansible playbooks describe remote provisioning, not local container orchestration.",
-        )
-    if "hosts" in top_keys and "services" not in top_keys:
-        return (
-            "Ansible Playbook",
-            "Ansible playbooks describe remote provisioning, not local container orchestration.",
-        )
-    if "description" in top_keys and "appVersion" in top_keys and "services" not in top_keys:
-        return (
-            "Helm Chart (Chart.yaml)",
-            "Helm chart definitions describe Kubernetes packaging, not local Docker Compose stacks.",
-        )
-    if "secrets" in top_keys and "services" in top_keys:
-        secrets_block = document.get("secrets")
-        if isinstance(secrets_block, dict):
-            for secret_cfg in secrets_block.values():
-                if isinstance(secret_cfg, dict) and "driver" in secret_cfg:
-                    return (
-                        "Docker Swarm stack",
-                        "Docker Swarm stack files require a multi-node Swarm cluster, not a single local host.",
-                    )
     return None
 
 

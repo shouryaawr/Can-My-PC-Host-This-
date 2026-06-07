@@ -4,7 +4,6 @@ from .schemas import (
     AnalyzeResponse,
     DiagnosticsPayload,
     OptimizationMetrics,
-    PatchCoord,
     ServiceAnalysisResult,
     ServiceContext,
     SolverResult,
@@ -24,9 +23,7 @@ def build_diagnostics(
     )
 
 
-def build_response(result: SolverResult) -> AnalyzeResponse:
-    patches = build_patches(result.contexts, result.c_gap)
-    optimized_yaml = result.baseline_yaml_string
+def build_response(result: SolverResult, optimized_yaml: str) -> AnalyzeResponse:
     service_results = build_service_results(result.contexts, result.floor_flags)
     free_ram_mb = result.payload.host_hardware.free_ram_mb
     ram_margin_mb = result.effective_free_ram - result.final_predicted_ram
@@ -37,7 +34,6 @@ def build_response(result: SolverResult) -> AnalyzeResponse:
         optimized_yaml_string=optimized_yaml,
         optimized_yaml=optimized_yaml,
         baseline_yaml_string=result.baseline_yaml_string,
-        patches=patches,
         metrics=OptimizationMetrics(
             initial_predicted_ram_mb=result.initial_predicted_ram,
             final_predicted_ram_mb=result.final_predicted_ram,
@@ -73,7 +69,6 @@ def build_error_response(
         optimized_yaml_string=yaml_string,
         optimized_yaml=yaml_string,
         baseline_yaml_string=baseline_yaml_string or yaml_string,
-        patches=[],
         metrics=OptimizationMetrics(
             initial_predicted_ram_mb=initial_predicted_ram,
             final_predicted_ram_mb=final_predicted_ram,
@@ -109,53 +104,4 @@ def build_service_results(
         for s in contexts
     ]
 
-def build_patches(
-    contexts: list[ServiceContext], c_gap: float
-) -> list[PatchCoord]:
-    patches: list[PatchCoord] = []
 
-    for service in contexts:
-        _emit_env_patches(service, patches)
-        if service.cgroups_injected:
-            _emit_cgroup_patches(service, c_gap, patches)
-
-    return patches
-
-def _emit_env_patches(service: ServiceContext, patches: list[PatchCoord]) -> None:
-    if not service.variables_mutated:
-        return
-
-    env = service.node.get("environment")
-    for var_name, detail in service.variables_mutated.items():
-        if isinstance(env, dict):
-            patches.append(PatchCoord(
-                op="set",
-                path=["services", service.name, "environment", var_name],
-                value=detail.to_val,
-            ))
-        elif isinstance(env, list):
-            for i, item in enumerate(env):
-                if isinstance(item, str) and item.startswith(f"{var_name}="):
-                    patches.append(PatchCoord(
-                        op="set",
-                        path=["services", service.name, "environment", i],
-                        value=f"{var_name}={detail.to_val}",
-                    ))
-                    break
-
-def _emit_cgroup_patches(
-    service: ServiceContext, c_gap: float, patches: list[PatchCoord]
-) -> None:
-    mem_limit = f"{int(service.final_ram_mb)}M"
-    patches.append(PatchCoord(
-        op="set",
-        path=["services", service.name, "deploy", "resources", "limits", "memory"],
-        value=mem_limit,
-    ))
-    if c_gap > 0 or service.xtuning_never_cgroup:
-        cpu_limit = round(max(0.05, service.cpu), 2)
-        patches.append(PatchCoord(
-            op="set",
-            path=["services", service.name, "deploy", "resources", "limits", "cpus"],
-            value=cpu_limit,
-        ))

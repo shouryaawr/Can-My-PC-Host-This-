@@ -1,5 +1,4 @@
 import { useCallback, useState } from "react";
-import { parseDocument } from "yaml";
 import { API_BASE_URL, DEFAULT_MANIFEST_PATH } from "../constants.js";
 import { isFailedAnalysis, parseManifestOptions } from "../utils.js";
 
@@ -98,21 +97,7 @@ export function useManifestAnalyzer() {
 
       const data = await response.json();
 
-      if (data.patches?.length > 0) {
-        try {
-          const doc = parseDocument(yamlString);
-          data.patches.forEach((patch) => {
-            if (patch.op === "set" || patch.op === "add") {
-              doc.setIn(patch.path, patch.value);
-            } else if (patch.op === "remove") {
-              doc.deleteIn(patch.path);
-            }
-          });
-          data.optimized_yaml_string = String(doc);
-        } catch (error) {
-          console.error("Failed to apply YAML patches:", error);
-        }
-      }
+
 
       setApiResponse(data);
       const failed = isFailedAnalysis(data);

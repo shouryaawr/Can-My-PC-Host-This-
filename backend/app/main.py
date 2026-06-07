@@ -13,7 +13,9 @@ import psutil
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from .engine import run_optimization_engine
+from .parser import parse_analysis_payload, dump_yaml
+from .patcher import build_response
+from .solver import solve_analysis
 from .schemas import (
     AnalyzeRequest,
     AnalyzeResponse,
@@ -114,7 +116,17 @@ def get_hardware() -> HostHardware:
 
 @app.post("/api/v1/analyze", response_model=AnalyzeResponse)
 def analyze(request: AnalyzeRequest) -> AnalyzeResponse:
-    return run_optimization_engine(request, get_profiles())
+    config = get_profiles()
+    parsed = parse_analysis_payload(request, config)
+    if parsed.response is not None:
+        return parsed.response
+
+    solved = solve_analysis(parsed)
+    if solved.response is not None:
+        return solved.response
+
+    optimized_yaml = dump_yaml(parsed.yaml, parsed.document)
+    return build_response(solved, optimized_yaml)
 
 
 @app.post("/api/v1/fetch-manifest")

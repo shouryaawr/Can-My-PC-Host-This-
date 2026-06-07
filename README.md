@@ -32,7 +32,7 @@ Built for developers running local services beside an IDE, and for operators tes
 
 **Deterministic Optimization Engine**
 
-The solver calculates predicted RAM and CPU utilization for every service in a manifest. It applies algebraic projection to tune service variables before falling back to hard Docker resource limits when the selected profile allows cgroup injection.
+The solver calculates predicted RAM and CPU utilization for every service in a manifest. It tunes service variables before falling back to hard Docker resource limits when the selected profile allows cgroup injection.
 
 **Pydantic-Validated Configuration**
 
@@ -78,7 +78,7 @@ The parser also detects hardcoded memory flags in `command` or `entrypoint` and 
 
 - **Diff Viewer**: Side-by-side comparison of the original and optimized manifest.
 - **Node Topology**: Service graph with dependency and resource-state indicators.
-- **Rule Trace**: Step-by-step engine trace for classification, projection, and safety decisions.
+- **Rule Trace**: Step-by-step engine trace for classification, optimization, and safety decisions.
 - **Diagnostics**: RAM margin, free RAM, cgroup activation, OOM risk, floor flags, and per-service safety state.
 
 ---
@@ -88,7 +88,7 @@ The parser also detects hardcoded memory flags in `command` or `entrypoint` and 
 ```text
 backend/app/
 |-- main.py
-|-- engine.py
+
 |-- parser.py
 |-- solver.py
 |-- patcher.py
@@ -132,16 +132,14 @@ The profile, tier, and floor models use `extra="forbid"` so stale or misspelled 
 The analyzer returns:
 
 - `optimized_yaml_string` and `baseline_yaml_string`
-- `patches` with typed `PatchCoord` operations
+
 - `metrics` with predicted RAM, RAM margin, CPU saturation, and free RAM
 - `services` and `topology` with per-service analysis data
 - `post_allocation_memory`
 - `diagnostics` with `cgroups_active`, `oom_risk_flag`, `headroom_mb`, and `free_ram_mb`
 - `warnings`, `execution_trace`, and `trace_log`
 
-### Patch Application
 
-The backend emits `PatchCoord` operations with `op`, `path`, and `value`. The frontend applies those operations to the original YAML document with the `yaml` package, then renders the result in the Diff Viewer.
 
 ---
 
@@ -151,7 +149,7 @@ The backend emits `PatchCoord` operations with `op`, `path`, and `value`. The fr
 2. **Validate**: The backend validates hardware, profile config, Compose structure, ports, and supported orchestrator shape.
 3. **Classify**: Each service is assigned a tier that determines RAM formula, CPU model, tunable variables, and minimum floors.
 4. **Solve**: The solver computes a profile-adjusted RAM and CPU budget, tunes eligible variables, and applies cgroup limits when enabled and needed.
-5. **Patch**: The backend returns a minimal set of patch coordinates.
+5. **Format**: The backend returns the optimized YAML string and analysis metrics.
 6. **Inspect**: The frontend shows the diff, topology, rule trace, metrics, and diagnostics.
 
 ---
@@ -173,7 +171,7 @@ The backend emits `PatchCoord` operations with `op`, `path`, and `value`. The fr
 - **Vite 5** - development server and production build
 - **Tailwind CSS 3** - styling
 - **Lucide React** - icons
-- **yaml 2.9.0** - client-side YAML document patching
+
 - **diff 9.0.0** - line diff generation
 
 ---
